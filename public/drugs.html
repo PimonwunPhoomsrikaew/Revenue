@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>รายการยา / เวชภัณฑ์ — JHCIS</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="dashboard-page">
+  <header class="topbar">
+    <h1>รายการยา / เวชภัณฑ์</h1>
+    <div class="topbar-right">
+      <span id="who"></span>
+      <a href="dashboard.html" class="btn-ghost">← กลับแดชบอร์ด</a>
+      <button id="logout" class="btn-ghost">ออกจากระบบ</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="controls" style="flex-wrap:wrap; gap:10px;">
+      <strong style="align-self:center;">เลือกหมวดที่จะ Export:</strong>
+      <button id="selectAll" class="btn-ghost" type="button">เลือกทั้งหมด</button>
+      <button id="clearAll" class="btn-ghost" type="button">ล้าง</button>
+    </section>
+
+    <section id="catGrid" class="cat-grid">
+      <p class="hint">กำลังโหลดหมวด…</p>
+    </section>
+
+    <section class="controls" style="gap:12px;">
+      <span id="selInfo" class="hint">ยังไม่ได้เลือกหมวด</span>
+      <button id="preview" type="button">👁 ดูตัวอย่าง</button>
+      <button id="export" type="button">⬇ Export Excel (.xlsx)</button>
+    </section>
+
+    <section id="previewWrap" class="detail hidden">
+      <h2 id="previewTitle"></h2>
+      <table>
+        <thead><tr><th>#</th><th>รหัสยา-เวชภัณฑ์</th><th>ชื่อยา</th><th>หมวด</th><th>ราคาทุน</th><th>ราคาขาย</th></tr></thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+      <p class="hint" id="previewNote"></p>
+    </section>
+  </main>
+
+  <div id="loading" class="loading-overlay hidden">
+    <div class="loading-box"><div class="spinner"></div><span>กำลังทำงาน…</span></div>
+  </div>
+
+  <script src="drugs.js"></script>
+</body>
+</html>

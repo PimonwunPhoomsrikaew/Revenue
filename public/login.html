@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>เข้าสู่ระบบ - JHCIS Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="login-page">
+  <form id="loginForm" class="login-card">
+    <h1>JHCIS Dashboard</h1>
+    <p class="sub">เข้าสู่ระบบเพื่อดูข้อมูลการรับบริการ</p>
+    <label>ชื่อผู้ใช้
+      <input id="username" type="text" autocomplete="username" required />
+    </label>
+    <label>รหัสผ่าน
+      <input id="password" type="password" autocomplete="current-password" required />
+    </label>
+    <button type="submit">เข้าสู่ระบบ</button>
+    <div id="err" class="error"></div>
+  </form>
+  <script>
+    const form = document.getElementById('loginForm');
+    const err = document.getElementById('err');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('username').value,
+          password: document.getElementById('password').value,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        location.href = '/dashboard.html';
+      } else {
+        err.textContent = data.error || 'เข้าสู่ระบบไม่สำเร็จ';
+      }
+    });
+  </script>
+</body>
+</html>

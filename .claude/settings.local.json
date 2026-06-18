@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where mysql *)",
+      "Bash(where mariadb *)",
+      "Bash(where python *)",
+      "Bash(where py *)",
+      "PowerShell($cmds = 'mysql','mariadb','python','py','python3','node','php'; foreach\\($c in $cmds\\){ $f = Get-Command $c -ErrorAction SilentlyContinue; if\\($f\\){ \"$c -> $\\($f.Source\\)\" } else { \"$c -> NOT FOUND\" } })",
+      "PowerShell(Test-NetConnection -ComputerName 183.88.232.251 -Port 3333 -WarningAction SilentlyContinue)",
+      "Bash(node -e \"console.log\\('node ok'\\); try{require\\('mysql2'\\);console.log\\('mysql2 present'\\)}catch\\(e\\){console.log\\('mysql2 missing'\\)}\")",
+      "Bash(cd /d D:\\\\Programs\\\\connectDB)",
+      "Bash(dir)",
+      "Bash(npm install *)",
+      "Bash(node -e \"try{require\\('mysql2'\\);console.log\\('mysql2 OK'\\)}catch\\(e\\){console.log\\('FAIL',e.message\\)}\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(node server.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)",
+      "Bash(curl -s -o /dev/null -w \"webapp HTTP: %{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(where claude *)",
+      "Bash(claude --version)",
+      "Bash(cp gas/LineDailyReport.gs gas/_check.js)",
+      "Bash(node --check gas/_check.js)",
+      "Bash(rm -f gas/_check.js)",
+      "Bash(cp gas/LineDailyReport.gs gas/_c.js)",
+      "Bash(node --check gas/_c.js)",
+      "Bash(rm -f gas/_c.js)",
+      "Bash(cp gas/LineBot.gs gas/_c.js)",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

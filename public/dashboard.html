@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JHCIS Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body class="dashboard-page">
+  <header class="topbar">
+    <h1>JHCIS Dashboard</h1>
+    <div class="topbar-right">
+      <span id="who"></span>
+      <a href="drugs.html" class="btn-ghost">💊 รายการยา / Export</a>
+      <button id="logout" class="btn-ghost">ออกจากระบบ</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="controls">
+      <label>จากวันที่ <input type="date" id="from" /></label>
+      <label>ถึงวันที่ <input type="date" id="to" /></label>
+      <button id="apply">แสดงข้อมูล</button>
+      <button id="last30" class="btn-ghost">30 วันล่าสุด</button>
+      <button id="exportPdf" class="btn-ghost">📄 Export PDF</button>
+      <button id="exportScreening" class="btn-ghost">📋 Export รายชื่อคัดกรอง (Excel)</button>
+    </section>
+
+    <section class="cards">
+      <div class="card"><div class="card-label">รวมผู้รับบริการ (ช่วงที่เลือก)</div><div class="card-value" id="sumPatients">-</div></div>
+      <div class="card card-revenue"><div class="card-label">รวมรายได้ (บาท)</div><div class="card-value" id="sumRevenue">-</div></div>
+    </section>
+
+    <section class="chart-wrap">
+      <canvas id="chart"></canvas>
+      <p class="hint">คลิกที่แท่งกราฟเพื่อดูรายชื่อผู้รับบริการของวันนั้น</p>
+    </section>
+
+    <section class="chart-wrap chart-trend">
+      <h2 class="trend-title">แนวโน้มรายวัน — PPFS ทั้ง 10 รายการ</h2>
+      <canvas id="trendChart"></canvas>
+    </section>
+
+    <section id="detail" class="detail hidden">
+      <h2 id="detailTitle"></h2>
+      <div id="catSummary" class="cat-summary"></div>
+      <table>
+        <thead><tr><th>#</th><th>เวลา</th><th>ชื่อ-สกุล</th><th>รับบริการ</th><th>PID</th></tr></thead>
+        <tbody id="detailBody"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="loading" class="loading-overlay hidden">
+    <div class="loading-box"><div class="spinner"></div><span>กำลังโหลดข้อมูล…</span></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
