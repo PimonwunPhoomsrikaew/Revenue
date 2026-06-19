@@ -1,0 +1,32 @@
+# Render Blueprint — deploy ด้วยการกด "New + > Blueprint" แล้วชี้มาที่ repo นี้
+# เอกสาร: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: jhcis-revenue-dashboard
+    runtime: node
+    plan: free
+    region: singapore            # ใกล้ไทยสุดในแผนฟรี
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/me      # ตอบ 200 เสมอ (ไม่ต้อง login) ใช้เช็คว่าแอปยังตื่นอยู่
+    envVars:
+      # ตั้งเองในหน้า Dashboard (เป็นความลับ — sync:false จึงไม่ถูก commit)
+      - key: APP_USER
+        sync: false
+      - key: APP_PASS
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "3306"
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      # Render สุ่มให้อัตโนมัติ — ปลอดภัยกว่าตั้งเอง
+      - key: SESSION_SECRET
+        generateValue: true
+      # ไม่ต้องตั้ง PORT — Render กำหนดให้เอง และ config.js อ่าน process.env.PORT อยู่แล้ว

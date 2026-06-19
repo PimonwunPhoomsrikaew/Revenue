@@ -1,4 +1,14 @@
 {
+  "name": "jhcis-revenue-dashboard",
+  "version": "1.0.0",
+  "description": "JHCIS revenue/screening dashboard (read-only)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
