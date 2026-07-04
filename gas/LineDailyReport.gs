@@ -176,15 +176,15 @@ function fetchPPFSByDate(d) {
     var dg = one(
       'SELECT ' +
       "  COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z32.0','Z32.1') THEN v.pid END) prt, " +
+      "  COUNT(DISTINCT CASE WHEN vd.diagcode='Z30.0' THEN v.pid END) inj, " +
       "  COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z23.5','Z23.6') THEN v.pid END) dt " +
       'FROM visit v JOIN visitdiag vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno WHERE v.visitdate=' + Q + notCancelled('v')
     );
 
-    // ---- ยาคุม (เม็ด=นับแผง, ฉีด=นับคน) ----
+    // ---- ยาคุม (เม็ด=นับแผง จาก visitdrug; ฉีด=นับคน จาก diagcode Z30.0) ----
     var ct = one(
       'SELECT ' +
-      '  COALESCE(SUM(CASE WHEN vd.drugcode IN (' + inList(PILL_CODES) + ') THEN vd.unit END),0) pillPacks, ' +
-      '  COUNT(DISTINCT CASE WHEN vd.drugcode IN (' + inList(INJECT_CODES) + ') THEN v.pid END) injPersons ' +
+      '  COALESCE(SUM(CASE WHEN vd.drugcode IN (' + inList(PILL_CODES) + ') THEN vd.unit END),0) pillPacks ' +
       'FROM visit v JOIN visitdrug vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno WHERE v.visitdate=' + Q + notCancelled('v')
     );
 
@@ -222,7 +222,7 @@ function fetchPPFSByDate(d) {
       { type: 'pending', label: '5) OP anywhere', amount: null, note: 'อยู่ระหว่างประมวลผล' },
       screenItem('6) ยาเสริมธาตุเหล็ก', SCREEN.iron, 'Iron'),
       { type: 'plain', label: '7) ยาเม็ดคุมกำเนิด', count: n(ct, 'pillPacks'), unit: 'แผง', amount: n(ct, 'pillPacks') * PPFS.pill },
-      { type: 'plain', label: '8) ยาฉีดคุมกำเนิด', count: n(ct, 'injPersons'), unit: 'คน', amount: n(ct, 'injPersons') * PPFS.inject },
+      { type: 'plain', label: '8) ยาฉีดคุมกำเนิด', count: n(dg, 'inj'), unit: 'คน', amount: n(dg, 'inj') * PPFS.inject },
       { type: 'plain', label: '9) วัคซีน EPI', count: n(ep, 'epiDoses'), unit: 'โดส', amount: n(ep, 'epiDoses') * PPFS.epi },
       { type: 'plain', label: '10) วัคซีน dT', count: n(dg, 'dt'), unit: 'คน', amount: n(dg, 'dt') * PPFS.dt },
     ];

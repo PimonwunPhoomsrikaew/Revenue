@@ -81,6 +81,17 @@ app.get('/api/category-trend', requireAuth, async (req, res) => {
   }
 });
 
+// Whole-year totals of the 10 PPFS categories for calendar years 2024-2026
+// (พ.ศ. 2567-2569), for the yearly grouped-bar summary.
+app.get('/api/category-yearly', requireAuth, async (req, res) => {
+  try {
+    const yearly = await db.categoryYearlyCounts([2024, 2025, 2026]);
+    res.json(yearly);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/patients', requireAuth, async (req, res) => {
   try {
     const { date } = req.query;
@@ -184,6 +195,17 @@ app.get('/api/drugs/export', requireAuth, async (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.listen(config.port, () => {
-  console.log(`JHCIS dashboard running at http://localhost:${config.port}`);
-});
+// Start listening and return the http.Server. Exported so the Electron
+// wrapper (electron-main.js) can boot the same server in-process; still
+// auto-starts when this file is run directly with `node server.js`.
+function start() {
+  return app.listen(config.port, () => {
+    console.log(`Revenue running at http://localhost:${config.port}`);
+  });
+}
+
+if (require.main === module) {
+  start();
+}
+
+module.exports = { app, start };

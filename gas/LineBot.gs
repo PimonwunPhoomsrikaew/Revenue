@@ -23,7 +23,9 @@ var CACHE_TIME = 300; // 5 นาที
 
 // ---- รายงาน PPFS (MySQL JHCIS) ----
 var DB = { host: '183.88.232.251', port: 3333, name: 'jhcisdb01088', user: 'db01088', pass: '@jhcis01088*' };
-var PPFS = { prt: 75, hpv: 50, fit: 60, iron: 80, pill: 40, inject: 60, epi: 20, dt: 20 };
+var PPFS = { prt: 75, hpv: 50, fit: 60, iron: 80, pill: 40, inject: 60, epi: 20, dt: 20, op: 70 };
+// OP anywhere = สิทธิ UC ที่ hosmain อยู่นอกจังหวัดนี้ (chospital.provcode ≠ LOCAL_PROVINCE)
+var LOCAL_PROVINCE = '13'; // ปทุมธานี (รพ.สต.หลักหก/บ้านคลองเปรม + รพ.ปทุม)
 var SCREEN = {
   // sex: '2'=เฉพาะหญิง, ไม่ระบุ=ทุกเพศ  (person.sex 1=ชาย, 2=หญิง)
   iron: { code: 'Z13.0', ageLo: 13, ageHi: 45, cycle: 1, rate: 80, sex: '2' },
@@ -31,8 +33,8 @@ var SCREEN = {
   fit:  { code: 'Z12.1', ageLo: 50, ageHi: 70, cycle: 2, rate: 60 },
 };
 var PILL_CODES = ['03'];
-var INJECT_CODES = ['12', 'DEPO-M', 'DEPO-M1'];
-var HERBAL_NAME = 'ไพล'; // สมุนไพร: จับจากยาที่ชื่อมีคำนี้ (จ่ายตามจริง = SUM realprice)
+// ยาฉีดคุม = มีทั้ง Z30.0 และ Z30.4 + มีรายการยา/บริการชื่อตรงแพตเทิร์นนี้ (ฉีดเข้ากล้ามเนื้อ)
+var INJECT_LIKE = '%ฉีด%กล้าม%';
 var EXCLUDE_FLAGSERVICE = ['99']; // visit ที่ยกเลิก — ไม่นับ
 
 // ==========================================
@@ -295,6 +297,12 @@ function fetchPPFSByDate(d) {
 
     var tot = one('SELECT COUNT(DISTINCT pid) total FROM visit v WHERE v.visitdate=' + Q + notCancelled('v'));
 
+    // เงินรับจริง (ส่วนที่ผู้ป่วยจ่ายเอง — ช่อง "เงินรับจริง" หน้าจ่ายยา) = ผลรวม visit.money2
+    var cashReceived = 0;
+    var rso = st.executeQuery('SELECT COALESCE(SUM(money2),0) m2 FROM visit WHERE visitdate=' + Q);
+    if (rso.next()) cashReceived = Number(rso.getString('m2'));
+    rso.close();
+
     var priorInCycle = function (code, years) {
       return 'EXISTS(SELECT 1 FROM visit v2 JOIN visitdiag d2 ON d2.pcucode=v2.pcucode AND d2.visitno=v2.visitno ' +
         "WHERE v2.pcucodeperson=v.pcucodeperson AND v2.pid=v.pid AND d2.diagcode='" + code + "' " +
@@ -329,34 +337,51 @@ function fetchPPFSByDate(d) {
     var dg = one(
       'SELECT ' +
       "  COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z32.0','Z32.1') THEN v.pid END) prt, " +
+      "  COUNT(DISTINCT CASE WHEN vd.diagcode='Z27.1' THEN v.pid END) epi, " +
       "  COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z23.5','Z23.6') THEN v.pid END) dt " +
       'FROM visit v JOIN visitdiag vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno WHERE v.visitdate=' + Q + notCancelled('v')
     );
 
     var ct = one(
       'SELECT ' +
-      '  COALESCE(SUM(CASE WHEN vd.drugcode IN (' + inList(PILL_CODES) + ') THEN vd.unit END),0) pillPacks, ' +
-      '  COUNT(DISTINCT CASE WHEN vd.drugcode IN (' + inList(INJECT_CODES) + ') THEN v.pid END) injPersons ' +
+      '  COALESCE(SUM(CASE WHEN vd.drugcode IN (' + inList(PILL_CODES) + ') THEN vd.unit END),0) pillPacks ' +
       'FROM visit v JOIN visitdrug vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno WHERE v.visitdate=' + Q + notCancelled('v')
     );
 
-    // สมุนไพร: จับจากยาที่ชื่อมีคำว่า "ไพล" — นับคน + รวมมูลค่าที่จ่ายจริง (realprice)
-    var herbal = { persons: 0, value: 0 };
-    var rsh = st.executeQuery(
-      'SELECT COUNT(DISTINCT v.pid) persons, COALESCE(SUM(vd.realprice),0) val ' +
-      'FROM visit v JOIN visitdrug vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno ' +
-      'JOIN cdrug cd ON cd.drugcode=vd.drugcode ' +
-      'WHERE v.visitdate=' + Q + notCancelled('v') +
-      " AND (cd.drugnamethai LIKE '%" + HERBAL_NAME + "%' OR cd.drugname LIKE '%" + HERBAL_NAME + "%')"
+    // ยาฉีดคุม: คน (distinct) ที่มี "ทั้ง Z30.0 และ Z30.4" + มีรายการยาชื่อ "ฉีดเข้ากล้ามเนื้อ" ในวันนั้น
+    var injPersons = 0;
+    var rsi = st.executeQuery(
+      'SELECT COUNT(DISTINCT t.pid) inj FROM ( ' +
+      '  SELECT v.pid pid, ' +
+      "    MAX(vd.diagcode='Z30.0') z0, MAX(vd.diagcode='Z30.4') z4, " +
+      "    MAX(cd.drugnamethai LIKE '" + INJECT_LIKE + "' OR cd.drugname LIKE '" + INJECT_LIKE + "') im " +
+      '  FROM visit v ' +
+      '  LEFT JOIN visitdiag vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno ' +
+      '  LEFT JOIN visitdrug dr ON dr.pcucode=v.pcucode AND dr.visitno=v.visitno ' +
+      '  LEFT JOIN cdrug cd ON cd.drugcode=dr.drugcode ' +
+      '  WHERE v.visitdate=' + Q + notCancelled('v') +
+      '  GROUP BY v.pid, v.pcucodeperson HAVING z0=1 AND z4=1 AND im=1 ) t'
     );
-    if (rsh.next()) { herbal.persons = rsh.getInt('persons'); herbal.value = Number(rsh.getString('val')); }
-    rsh.close();
+    if (rsi.next()) injPersons = rsi.getInt('inj');
+    rsi.close();
 
-    var ep = one(
-      'SELECT COUNT(*) epiDoses FROM visitepi e ' +
-      'JOIN visit v ON v.pcucode=e.pcucode AND v.visitno=e.visitno ' +
-      "WHERE e.dateepi=" + Q + " AND e.vaccinecode NOT LIKE 'COVID%' AND e.vaccinecode<>'dT'" + notCancelled('v')
+    // OP anywhere: สิทธิ UC (mapright 0100) ที่ hosmain อยู่นอกจังหวัด (provcode ≠ LOCAL_PROVINCE)
+    var opList = [];
+    var rsop = st.executeQuery(
+      'SELECT v.pid, p.fname, p.lname ' +
+      'FROM visit v JOIN person p ON p.pcucodeperson=v.pcucodeperson AND p.pid=v.pid ' +
+      'JOIN cright r ON r.rightcode=v.rightcode ' +
+      'LEFT JOIN chospital h ON h.hoscode=v.hosmain ' +
+      'WHERE v.visitdate=' + Q + notCancelled('v') +
+      " AND r.mapright='0100' AND v.hosmain IS NOT NULL AND v.hosmain<>'' " +
+      " AND (h.provcode IS NULL OR h.provcode<>'" + LOCAL_PROVINCE + "') " +
+      'GROUP BY v.pid, p.fname, p.lname ORDER BY v.pid'
     );
+    while (rsop.next()) {
+      opList.push({ hn: rsop.getInt('pid'), name: ((rsop.getString('fname') || '') + ' ' + (rsop.getString('lname') || '')).trim() });
+    }
+    rsop.close();
+
     st.close();
 
     var n = function (o, k) { return Number(o[k] || 0); };
@@ -376,16 +401,16 @@ function fetchPPFSByDate(d) {
       { type: 'plain', label: '1) ทดสอบการตั้งครรภ์ (PRT)', count: n(dg, 'prt'), unit: 'คน', amount: n(dg, 'prt') * PPFS.prt },
       screenItem('2) มะเร็งปากมดลูก (HPV)', SCREEN.hpv, 'Hpv'),
       screenItem('3) มะเร็งลำไส้ (Fit Test)', SCREEN.fit, 'Fit'),
-      { type: 'plain', label: '4) จ่ายยาสมุนไพร (ไพล)', count: herbal.persons, unit: 'คน', amount: herbal.value },
-      { type: 'pending', label: '5) OP anywhere', amount: null, note: 'อยู่ระหว่างประมวลผล' },
+      { type: 'pending', label: '4) จ่ายยาสมุนไพร', amount: null, note: 'กำลังดำเนินการตรวจสอบ' },
+      { type: 'oplist', label: '5) OP anywhere (UC นอกจังหวัด)', count: opList.length, unit: 'คน', amount: opList.length * PPFS.op, opList: opList },
       screenItem('6) ยาเสริมธาตุเหล็ก', SCREEN.iron, 'Iron'),
       { type: 'plain', label: '7) ยาเม็ดคุมกำเนิด', count: n(ct, 'pillPacks'), unit: 'แผง', amount: n(ct, 'pillPacks') * PPFS.pill },
-      { type: 'plain', label: '8) ยาฉีดคุมกำเนิด', count: n(ct, 'injPersons'), unit: 'คน', amount: n(ct, 'injPersons') * PPFS.inject },
-      { type: 'plain', label: '9) วัคซีน EPI', count: n(ep, 'epiDoses'), unit: 'โดส', amount: n(ep, 'epiDoses') * PPFS.epi },
+      { type: 'plain', label: '8) ยาฉีดคุมกำเนิด', count: injPersons, unit: 'คน', amount: injPersons * PPFS.inject },
+      { type: 'plain', label: '9) วัคซีน EPI', count: n(dg, 'epi'), unit: 'คน', amount: n(dg, 'epi') * PPFS.epi },
       { type: 'plain', label: '10) วัคซีน dT', count: n(dg, 'dt'), unit: 'คน', amount: n(dg, 'dt') * PPFS.dt },
     ];
     var totalPpfs = items.reduce(function (s, it) { return s + (it.amount || 0); }, 0);
-    return { total: n(tot, 'total'), items: items, totalPpfs: totalPpfs };
+    return { total: n(tot, 'total'), cashReceived: cashReceived, items: items, totalPpfs: totalPpfs };
   } finally {
     conn.close();
   }
@@ -425,6 +450,11 @@ function buildPPFSFlexMessage(summary, d) {
       lines.push(row('ยอดจ่าย PPFS', amountText, amountColor));
     } else if (it.type === 'pending') {
       lines.push(row('สถานะ', amountText, amountColor));
+    } else if (it.type === 'oplist') {
+      lines.push(row('ทำได้ ' + it.count + ' ' + it.unit, amountText, amountColor));
+      it.opList.forEach(function (p) {
+        lines.push(row('• HN ' + p.hn + ' ' + p.name, '', '#1f6fb2', true));
+      });
     } else {
       lines.push(row('ทำได้ ' + it.count + ' ' + it.unit, amountText, amountColor));
     }
@@ -443,9 +473,16 @@ function buildPPFSFlexMessage(summary, d) {
         { type: 'text', text: 'ประจำวันที่ ' + displayDate, color: '#ffffffcc', size: 'xs', margin: 'sm' },
       ] },
       body: { type: 'box', layout: 'vertical', contents: body },
-      footer: { type: 'box', layout: 'horizontal', backgroundColor: '#fff4f4', paddingAll: 'lg', contents: [
-        { type: 'text', text: '💰 รวมยอด PPFS', size: 'sm', weight: 'bold', color: '#d9534f' },
-        { type: 'text', text: fmtBaht_(summary.totalPpfs) + ' ฿', size: 'md', align: 'end', weight: 'bold', color: '#d9534f' },
+      footer: { type: 'box', layout: 'vertical', backgroundColor: '#fff4f4', paddingAll: 'lg', spacing: 'sm', contents: [
+        { type: 'box', layout: 'horizontal', contents: [
+          { type: 'text', text: '💰 รวมยอด PPFS', size: 'sm', weight: 'bold', color: '#d9534f' },
+          { type: 'text', text: fmtBaht_(summary.totalPpfs) + ' ฿', size: 'md', align: 'end', weight: 'bold', color: '#d9534f' },
+        ] },
+        { type: 'separator' },
+        { type: 'box', layout: 'horizontal', contents: [
+          { type: 'text', text: '💵 ยอดเงินสดรายวัน', size: 'sm', weight: 'bold', color: '#16794c' },
+          { type: 'text', text: fmtBaht_(summary.cashReceived) + ' ฿', size: 'md', align: 'end', weight: 'bold', color: '#16794c' },
+        ] },
       ] },
     },
   };
@@ -607,4 +644,63 @@ function manualClearCache() {
     cache.remove(CACHE_KEY + '_total');
   }
   SpreadsheetApp.getActiveSpreadsheet().toast('บอทพร้อมตอบข้อมูลล่าสุดแล้ว', '✅ อัปเดต Cache สำเร็จ', 5);
+}
+
+// ==========================================
+// 7. ส่งรายงาน PPFS อัตโนมัติทุกวันเวลา 19:10 (Broadcast)
+// ----------------------------------------------------------------------------
+// เริ่มใช้งาน: รันฟังก์ชัน setupDailyBroadcast() หนึ่งครั้ง (อนุญาตสิทธิ์ตอนถูกถาม)
+// ยกเลิก: รัน removeDailyBroadcast()
+// ใช้วิธีตั้ง trigger รอบใหม่ทุกครั้ง → ได้เวลา 19:10 แม่นกว่า atHour/nearMinute
+// ==========================================
+var AUTO_HOUR = 19, AUTO_MINUTE = 10;
+
+// ฟังก์ชันที่ trigger เรียก: ดึงยอดวันนี้ → broadcast → ตั้งรอบถัดไป
+function sendDailyBroadcast() {
+  try {
+    var iso = Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM-dd');
+    var summary = fetchPPFSByDate(iso);
+    broadcastToLine(buildPPFSFlexMessage(summary, iso));
+    Logger.log('✅ broadcast PPFS ' + iso + ' (รวม ' + summary.totalPpfs + ' บาท)');
+  } catch (err) {
+    Logger.log('⚠️ broadcast ล้มเหลว: ' + err);
+  } finally {
+    scheduleNextBroadcast_(); // ตั้งรอบ 19:10 ของวันถัดไป
+  }
+}
+
+// ส่งหาทุกคนที่แอดบอท/อยู่ในกลุ่มที่บอทอยู่
+function broadcastToLine(payload) {
+  var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/broadcast', {
+    method: 'post',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + LINE_ACCESS_TOKEN },
+    muteHttpExceptions: true,
+    payload: JSON.stringify({ messages: Array.isArray(payload) ? payload : [payload] }),
+  });
+  Logger.log('📣 broadcast status=' + res.getResponseCode() + ' body=' + res.getContentText());
+}
+
+// รัน 1 ครั้งเพื่อเริ่มระบบส่งอัตโนมัติ
+function setupDailyBroadcast() {
+  scheduleNextBroadcast_();
+  Logger.log('✅ ตั้งส่งอัตโนมัติทุกวันเวลา ' + AUTO_HOUR + ':' + (AUTO_MINUTE < 10 ? '0' : '') + AUTO_MINUTE);
+}
+
+function scheduleNextBroadcast_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sendDailyBroadcast') ScriptApp.deleteTrigger(t);
+  });
+  var now = new Date();
+  var next = new Date();
+  next.setHours(AUTO_HOUR, AUTO_MINUTE, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1); // เลยเวลาวันนี้แล้ว → พรุ่งนี้
+  ScriptApp.newTrigger('sendDailyBroadcast').timeBased().at(next).create();
+  Logger.log('รอบถัดไป: ' + next);
+}
+
+function removeDailyBroadcast() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sendDailyBroadcast') ScriptApp.deleteTrigger(t);
+  });
+  Logger.log('🛑 ยกเลิกการส่งอัตโนมัติแล้ว');
 }

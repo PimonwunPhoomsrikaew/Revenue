@@ -37,7 +37,7 @@ function safeSheetName(label, used) {
 // rows: array from drugs.list(). Returns a populated ExcelJS.Workbook.
 function buildWorkbook(rows) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'JHCIS Dashboard';
+  wb.creator = 'Revenue';
   wb.created = new Date(0); // deterministic; real timestamp not needed in file
 
   // Group rows by category, preserving the canonical category order.

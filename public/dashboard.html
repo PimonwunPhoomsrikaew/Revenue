@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>JHCIS Dashboard</title>
+  <title>Revenue</title>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body class="dashboard-page">
   <header class="topbar">
-    <h1>JHCIS Dashboard</h1>
+    <h1>Revenue</h1>
     <div class="topbar-right">
       <span id="who"></span>
       <a href="drugs.html" class="btn-ghost">💊 รายการยา / Export</a>
@@ -23,8 +23,13 @@
       <label>ถึงวันที่ <input type="date" id="to" /></label>
       <button id="apply">แสดงข้อมูล</button>
       <button id="last30" class="btn-ghost">30 วันล่าสุด</button>
-      <button id="exportPdf" class="btn-ghost">📄 Export PDF</button>
-      <button id="exportScreening" class="btn-ghost">📋 Export รายชื่อคัดกรอง (Excel)</button>
+      <div class="dropdown" id="exportDropdown">
+        <button id="exportToggle" class="btn-ghost" type="button" aria-haspopup="true" aria-expanded="false">⬇ Export ▾</button>
+        <div class="dropdown-menu hidden" id="exportMenu" role="menu">
+          <button id="exportPdf" type="button" role="menuitem">📄 Export PDF</button>
+          <button id="exportScreening" type="button" role="menuitem">📋 รายชื่อคัดกรอง (Excel)</button>
+        </div>
+      </div>
     </section>
 
     <section class="cards">
@@ -38,8 +43,13 @@
     </section>
 
     <section class="chart-wrap chart-trend">
-      <h2 class="trend-title">แนวโน้มรายวัน — PPFS ทั้ง 10 รายการ</h2>
+      <h2 class="trend-title">แนวโน้มรายวัน — PPFS ทั้ง 12 รายการ</h2>
       <canvas id="trendChart"></canvas>
+    </section>
+
+    <section class="chart-wrap chart-trend">
+      <h2 class="trend-title">ยอดรวมรายปี — PPFS ทั้ง 12 รายการ (ปี 67–69)</h2>
+      <canvas id="yearlyChart"></canvas>
     </section>
 
     <section id="detail" class="detail hidden">

@@ -1,4 +1,14 @@
 {
+  "name": "jhcis-dashboard",
+  "version": "1.0.0",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server.js"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  },
   "dependencies": {
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",

@@ -40,7 +40,7 @@ function safeSheetName(label, used) {
 // shown on the summary sheet. Returns a populated ExcelJS.Workbook.
 function buildWorkbook(rows, from, to) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'JHCIS Dashboard';
+  wb.creator = 'Revenue';
   wb.created = new Date(0); // deterministic; real timestamp not needed in file
 
   // Group rows by diagcode, in the canonical service order.

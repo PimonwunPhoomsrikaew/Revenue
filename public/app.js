@@ -2,12 +2,17 @@ const fromEl = document.getElementById('from');
 const toEl = document.getElementById('to');
 let chart;
 let trendChart;
+let yearlyChart;
 let currentDaily = [];
+
+// One distinct colour per year column in the yearly grouped-bar chart (67/68/69).
+const YEAR_COLORS = ['#4363d8', '#3cb44b', '#f58231'];
 
 // One distinct colour per PPFS line (order matches the server's series order).
 const TREND_COLORS = [
   '#e6194b', '#3cb44b', '#f58231', '#4363d8', '#911eb4',
   '#42d4f4', '#bfa100', '#f032e6', '#469990', '#9a6324',
+  '#808000', '#000075',
 ];
 
 function fmt(d) {
@@ -119,6 +124,48 @@ function renderTrend(trend) {
   });
 }
 
+// Whole-year totals for the 10 PPFS categories (fixed years 67-69), shown as a
+// grouped bar chart: one group per category, one bar per year. Loaded once at
+// startup — it does not depend on the date-range picker.
+async function loadYearly() {
+  try {
+    const data = await api('/api/category-yearly');
+    if (data.error) throw new Error(data.error);
+    renderYearly(data);
+  } catch (e) {
+    if (e.message === 'unauthorized') return;
+    // Non-fatal: the daily views still work without the yearly summary.
+    console.error('โหลดยอดรวมรายปีไม่สำเร็จ:', e.message);
+  }
+}
+
+function renderYearly(data) {
+  const labels = data.categories.map((c) => c.label);
+  const datasets = data.series.map((s, i) => ({
+    label: `ปี ${s.label} (${s.be})`,
+    data: s.data,
+    backgroundColor: YEAR_COLORS[i % YEAR_COLORS.length],
+    borderRadius: 4,
+  }));
+  if (yearlyChart) yearlyChart.destroy();
+  yearlyChart = new Chart(document.getElementById('yearlyChart'), {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { font: { size: 11 } } },
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { enabled: true },
+      },
+    },
+  });
+}
+
 function renderCategories(categories) {
   const wrap = document.getElementById('catSummary');
   wrap.innerHTML = '';
@@ -214,7 +261,7 @@ function exportPdf() {
       <td class="c">${totalRevenue.toLocaleString()}</td></tr>
     </tfoot>
   </table>
-  <p class="meta">พิมพ์เมื่อ ${printedAt} — JHCIS Dashboard</p>
+  <p class="meta">พิมพ์เมื่อ ${printedAt} — Revenue</p>
   <script>window.onload = function () { window.print(); };<\/script>
 </body></html>`;
 
@@ -236,6 +283,23 @@ function exportScreening() {
 
 document.getElementById('exportScreening').addEventListener('click', exportScreening);
 document.getElementById('exportPdf').addEventListener('click', exportPdf);
+
+// Export dropdown: toggle on click, close on outside click or after a choice.
+const exportToggle = document.getElementById('exportToggle');
+const exportMenu = document.getElementById('exportMenu');
+function closeExportMenu() {
+  exportMenu.classList.add('hidden');
+  exportToggle.setAttribute('aria-expanded', 'false');
+}
+exportToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = exportMenu.classList.toggle('hidden');
+  exportToggle.setAttribute('aria-expanded', String(!open));
+});
+exportMenu.addEventListener('click', closeExportMenu);
+document.addEventListener('click', (e) => {
+  if (!document.getElementById('exportDropdown').contains(e.target)) closeExportMenu();
+});
 document.getElementById('apply').addEventListener('click', loadDaily);
 document.getElementById('last30').addEventListener('click', () => { setDefaultRange(); loadDaily(); });
 document.getElementById('logout').addEventListener('click', async () => {
@@ -249,4 +313,5 @@ document.getElementById('logout').addEventListener('click', async () => {
   document.getElementById('who').textContent = `ผู้ใช้: ${me.user}`;
   setDefaultRange();
   loadDaily();
+  loadYearly();
 })();
