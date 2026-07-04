@@ -1,13 +1,13 @@
 {
-  "name": "jhcis-dashboard",
+  "name": "jhcis-revenue-dashboard",
   "version": "1.0.0",
-  "main": "electron-main.js",
+  "description": "JHCIS revenue/screening dashboard (read-only)",
+  "main": "server.js",
   "scripts": {
-    "start": "electron .",
-    "server": "node server.js"
+    "start": "node server.js"
   },
-  "devDependencies": {
-    "electron": "^33.2.0"
+  "engines": {
+    "node": "22.x"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
