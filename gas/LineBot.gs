@@ -29,7 +29,7 @@ var LOCAL_PROVINCE = '13'; // ปทุมธานี (รพ.สต.หลั�
 var SCREEN = {
   // sex: '2'=เฉพาะหญิง, ไม่ระบุ=ทุกเพศ  (person.sex 1=ชาย, 2=หญิง)
   iron: { code: 'Z13.0', ageLo: 13, ageHi: 45, cycle: 1, rate: 80, sex: '2' },
-  hpv:  { code: 'Z12.4', ageLo: 30, ageHi: 59, cycle: 5, rate: 50, sex: '2' },
+  hpv:  { code: 'Z11.5', ageLo: 30, ageHi: 59, cycle: 5, rate: 50, sex: '2' },
   fit:  { code: 'Z12.1', ageLo: 50, ageHi: 70, cycle: 2, rate: 60 },
 };
 var PILL_CODES = ['03'];
@@ -70,6 +70,8 @@ function doPost(e) {
           return q ? searchInvertedIndex(q, getOrBuildDatabase())
                    : { type: 'text', text: 'พิมพ์ชื่อสินค้าต่อท้ายด้วยครับ เช่น "ค้นหา พารา"' };
         };
+      } else if (userMessage.indexOf('ยา') === 0) {
+        handler = function () { return handleDrugStock_(userMessage); };         // ค้นยาคงเหลือจาก JHCIS
       } else if (event.source.type === 'user') {
         handler = function () { return helpMessage_(); };                        // แนะนำคำสั่ง (เฉพาะแชตส่วนตัว)
       }
@@ -131,7 +133,78 @@ function helpMessage_() {
     '🤖 พิมพ์คำสั่งได้ดังนี้\n' +
     '• เช็คยอด 10/6/2025 — รายงานยอด PPFS รายวัน\n' +
     '• เช็ค PP 1234567890123 — ตรวจสิทธิคัดกรองรายคน\n' +
-    '• ค้นหา พารา — ค้นสต๊อกสินค้า' };
+    '• ยา FERROUS FU 75 — ค้นยอดยาคงเหลือ (JHCIS)\n' +
+    '• ค้นหา พารา — ค้นสต๊อกสินค้า (Google Sheet)' };
+}
+
+// ==========================================
+// 3c. คำสั่ง "ยา <ชื่อยา>" → ค้นยอดยาคงเหลือจาก JHCIS (cdrugremain)
+// ==========================================
+function handleDrugStock_(text) {
+  var q = text.replace(/^ยา/, '').trim();
+  if (!q) return { type: 'text', text: 'พิมพ์ชื่อยาต่อท้ายด้วยครับ เช่น "ยา FERROUS FU 75"' };
+  try {
+    return buildDrugStockFlex_(q, fetchDrugStock_(q));
+  } catch (err) {
+    return { type: 'text', text: '⚠️ ค้นยาไม่สำเร็จ\n' + err };
+  }
+}
+
+// ค้นยาจากชื่อ (ไทย/อังกฤษ) แบบ token AND + ดึงยอดคงเหลือจาก cdrugremain.remain
+function fetchDrugStock_(q) {
+  var url = 'jdbc:mysql://' + DB.host + ':' + DB.port + '/' + DB.name + '?useUnicode=true&characterEncoding=UTF-8';
+  var conn = Jdbc.getConnection(url, DB.user, DB.pass);
+  try {
+    var toks = q.split(/\s+/);
+    var where = [];
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i].replace(/'/g, ''); // กัน SQL injection เบื้องต้น
+      if (t) where.push("(cd.drugname LIKE '%" + t + "%' OR cd.drugnamethai LIKE '%" + t + "%')");
+    }
+    if (!where.length) return [];
+    var st = conn.createStatement();
+    var rs = st.executeQuery(
+      'SELECT COALESCE(cd.drugnamethai,cd.drugname) name, cd.drugname eng, cd.pack, ' +
+      '       COALESCE(rm.remain,0) remain ' +
+      'FROM cdrug cd LEFT JOIN cdrugremain rm ON rm.drugcode=cd.drugcode ' +
+      'WHERE ' + where.join(' AND ') + ' ORDER BY (rm.remain IS NULL), name LIMIT 20'
+    );
+    var out = [];
+    while (rs.next()) {
+      out.push({ name: rs.getString('name'), eng: rs.getString('eng'), pack: rs.getString('pack'), remain: rs.getInt('remain') });
+    }
+    rs.close(); st.close();
+    return out;
+  } finally {
+    conn.close();
+  }
+}
+
+function buildDrugStockFlex_(q, rows) {
+  if (!rows.length) return { type: 'text', text: '❌ ไม่พบยา "' + q + '"\nลองพิมพ์ชื่อสั้นลง เช่น "ยา ferrous"' };
+  var contents = [];
+  rows.forEach(function (r) {
+    var color = (r.remain === 0) ? '#ff334b' : (r.remain <= 10 ? '#ff9900' : '#03c75a');
+    var label = r.name + (r.eng && r.eng !== r.name ? ' (' + r.eng + ')' : '') + (r.pack ? ' · ' + r.pack : '');
+    contents.push({ type: 'box', layout: 'horizontal', margin: 'md', contents: [
+      { type: 'text', text: label, size: 'xs', color: '#555555', flex: 3, wrap: true },
+      { type: 'text', text: 'คงเหลือ ' + r.remain, size: 'xs', color: color, align: 'end', weight: 'bold', flex: 2 },
+    ] });
+    contents.push({ type: 'separator', margin: 'sm' });
+  });
+  if (contents.length) contents.pop();
+  return {
+    type: 'flex',
+    altText: '💊 ยาคงเหลือ: ' + q + ' (' + rows.length + ' รายการ)',
+    contents: {
+      type: 'bubble', size: 'mega',
+      header: { type: 'box', layout: 'vertical', backgroundColor: '#0D2C54', contents: [
+        { type: 'text', text: '💊 ยาคงเหลือ', color: '#ffffff', weight: 'bold', size: 'md' },
+        { type: 'text', text: 'ค้นหา: "' + q + '" (' + rows.length + ' รายการ)', color: '#ffffffcc', size: 'xs', margin: 'sm' },
+      ] },
+      body: { type: 'box', layout: 'vertical', contents: contents },
+    },
+  };
 }
 
 // ==========================================
@@ -172,13 +245,13 @@ function fetchPPPerson_(cid) {
       'SELECT ' +
       "  MAX(CASE WHEN vd.diagcode='Z13.0' THEN v.visitdate END) iron_last, " +
       "  MAX(CASE WHEN vd.diagcode='Z13.0' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.iron.cycle + " YEAR) THEN 1 ELSE 0 END) iron_in, " +
-      "  MAX(CASE WHEN vd.diagcode='Z12.4' THEN v.visitdate END) hpv_last, " +
-      "  MAX(CASE WHEN vd.diagcode='Z12.4' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.hpv.cycle + " YEAR) THEN 1 ELSE 0 END) hpv_in, " +
+      "  MAX(CASE WHEN vd.diagcode='Z11.5' THEN v.visitdate END) hpv_last, " +
+      "  MAX(CASE WHEN vd.diagcode='Z11.5' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.hpv.cycle + " YEAR) THEN 1 ELSE 0 END) hpv_in, " +
       "  MAX(CASE WHEN vd.diagcode='Z12.1' THEN v.visitdate END) fit_last, " +
       "  MAX(CASE WHEN vd.diagcode='Z12.1' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.fit.cycle + " YEAR) THEN 1 ELSE 0 END) fit_in " +
       'FROM visit v JOIN visitdiag vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno ' +
       "WHERE v.pcucodeperson='" + pc + "' AND v.pid=" + pid + " AND v.flagservice NOT IN ('99') " +
-      "AND vd.diagcode IN ('Z13.0','Z12.4','Z12.1')"
+      "AND vd.diagcode IN ('Z13.0','Z11.5','Z12.1')"
     );
     var hist = {};
     if (h.next()) ['iron_last','iron_in','hpv_last','hpv_in','fit_last','fit_in'].forEach(function (k) { hist[k] = h.getString(k); });
@@ -420,9 +493,14 @@ function buildPPFSFlexMessage(summary, d) {
   var parts = d.split('-');
   var displayDate = parts[2] + '/' + parts[1] + '/' + parts[0];
   var row = function (label, value, color, indent) {
+    var left = { type: 'text', text: (indent ? '   ' : '') + label, size: 'xs', color: indent ? '#999999' : '#777777', flex: 6, wrap: true };
+    // ถ้าค่าฝั่งขวาว่าง → แสดงคอลัมน์เดียว (LINE ไม่ยอมรับ text ว่าง)
+    if (value === '' || value === null || value === undefined) {
+      return { type: 'box', layout: 'horizontal', margin: 'xs', contents: [left] };
+    }
     return { type: 'box', layout: 'horizontal', margin: 'xs', contents: [
-      { type: 'text', text: (indent ? '   ' : '') + label, size: 'xs', color: indent ? '#999999' : '#777777', flex: 6, wrap: true },
-      { type: 'text', text: value, size: 'xs', align: 'end', weight: 'bold', color: color || '#111111', flex: 4, wrap: true },
+      left,
+      { type: 'text', text: String(value), size: 'xs', align: 'end', weight: 'bold', color: color || '#111111', flex: 4, wrap: true },
     ] };
   };
   var body = [];
@@ -453,7 +531,8 @@ function buildPPFSFlexMessage(summary, d) {
     } else if (it.type === 'oplist') {
       lines.push(row('ทำได้ ' + it.count + ' ' + it.unit, amountText, amountColor));
       it.opList.forEach(function (p) {
-        lines.push(row('• HN ' + p.hn + ' ' + p.name, '', '#1f6fb2', true));
+        // ใช้ text เดี่ยว (ไม่ใช่ row 2 คอลัมน์) — เลี่ยง text ว่างที่ LINE ปฏิเสธ
+        lines.push({ type: 'text', text: '   • HN ' + p.hn + ' ' + p.name, size: 'xs', color: '#1f6fb2', wrap: true });
       });
     } else {
       lines.push(row('ทำได้ ' + it.count + ' ' + it.unit, amountText, amountColor));

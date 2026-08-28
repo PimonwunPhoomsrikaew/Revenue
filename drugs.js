@@ -26,6 +26,17 @@ const CATEGORIES = [
 ];
 
 const BY_KEY = new Map(CATEGORIES.map((c) => [c.key, c]));
+const BY_CODE = new Map(CATEGORIES.filter((c) => c.code !== null).map((c) => [c.code, c]));
+
+// The categories offered by the dedicated "ยอดจ่ายรายวัน" (dispensing)
+// export, in the order they should appear in that picker. A curated subset
+// of CATEGORIES — narrower than the master-list export's category grid.
+const DISPENSING_EXPORT_CATEGORY_KEYS = ['01', '10', '05', '03', '04'];
+
+// Map a raw cdrug.drugtype value (as stored, including null/'') to its category.
+function categoryFor(drugtype) {
+  return BY_CODE.get(drugtype) || BY_KEY.get('_none');
+}
 
 // Resolve requested category keys to a SQL WHERE clause on drugtype.
 // Returns { where, params }. Unknown keys are ignored. If `keys` is empty
@@ -84,8 +95,7 @@ async function list(keys) {
     params
   );
   return rows.map((r) => {
-    const cat = [...BY_KEY.values()].find((c) => c.code === r.drugtype) ||
-      BY_KEY.get('_none');
+    const cat = categoryFor(r.drugtype);
     return {
       code: r.code,
       name: r.name === null ? '' : r.name,
@@ -97,4 +107,107 @@ async function list(keys) {
   });
 }
 
-module.exports = { CATEGORIES, categories, list, whereForKeys };
+// Every drug dispensed within a date range (inclusive), one row per
+// visitdrug line. Pass dateFrom === dateTo for a single day.
+// keys: category keys to restrict to (same as list()); empty/undefined = all.
+// codes: exact drugcode values to restrict to (optional); empty/undefined =
+//   no code filter (used by the "ยอดจ่ายรายวัน" export, which requires
+//   picking specific drug items rather than a whole category).
+//   date       -> visit.visitdate
+//   time       -> visit.timestart
+//   visitno    -> visit.visitno
+//   pid        -> visit.pid
+//   patientName-> person prename+fname+lname
+//   code       -> visitdrug.drugcode
+//   name       -> cdrug.drugname
+//   qty        -> visitdrug.unit
+//   amount     -> visitdrug.realprice
+async function transactionsForDate(dateFrom, dateTo, keys, codes) {
+  const { where, params } = whereForKeys(keys);
+  const catFilter = where ? where.replace('WHERE ', 'AND (') + ')' : '';
+  const codesFilter = codes && codes.length ? ` AND vd.drugcode IN (${codes.map(() => '?').join(',')})` : '';
+  const codesParams = codes && codes.length ? codes : [];
+  const [rows] = await db.pool.query(
+    `SELECT v.visitdate       AS date,
+            v.timestart       AS time,
+            v.visitno         AS visitno,
+            v.pid             AS pid,
+            pn.prename        AS pre,
+            p.fname           AS fname,
+            p.lname           AS lname,
+            vd.drugcode       AS code,
+            c.drugname        AS name,
+            c.drugtype        AS drugtype,
+            vd.unit           AS qty,
+            vd.realprice      AS amount
+     FROM visitdrug vd
+     JOIN visit v ON v.pcucode = vd.pcucode AND v.visitno = vd.visitno
+     LEFT JOIN cdrug c ON c.drugcode = vd.drugcode
+     LEFT JOIN person p ON p.pcucodeperson = v.pcucodeperson AND p.pid = v.pid
+     LEFT JOIN _tmpprename_code pn ON pn.prenamecode = p.prename
+     WHERE v.visitdate BETWEEN ? AND ? ${catFilter}${codesFilter}
+     ORDER BY v.visitdate, c.drugtype, c.drugname, v.timestart, v.visitno`,
+    [dateFrom, dateTo, ...params, ...codesParams]
+  );
+  return rows.map((r) => {
+    const cat = categoryFor(r.drugtype);
+    return {
+      date: r.date,
+      time: r.time || '',
+      visitno: r.visitno,
+      pid: r.pid,
+      patientName: `${r.pre || ''}${r.fname || ''} ${r.lname || ''}`.trim() || '(ไม่พบชื่อ)',
+      code: r.code,
+      name: r.name === null ? '' : r.name,
+      qty: r.qty === null ? 0 : Number(r.qty),
+      amount: r.amount === null ? null : Number(r.amount),
+      categoryKey: cat.key,
+      categoryLabel: cat.label,
+    };
+  });
+}
+
+// Collapse dispensing lines (from transactionsForDate) into one row per drug:
+// how many distinct patients received it and how much was dispensed in total.
+//   patientCount -> COUNT(DISTINCT pid)
+//   qty          -> SUM(unit)
+//   amount       -> SUM(realprice)
+function aggregateByDrug(txRows) {
+  const byDrug = new Map();
+  for (const r of txRows) {
+    if (!byDrug.has(r.code)) {
+      byDrug.set(r.code, {
+        code: r.code,
+        name: r.name,
+        categoryKey: r.categoryKey,
+        categoryLabel: r.categoryLabel,
+        patients: new Set(),
+        qty: 0,
+        amount: 0,
+      });
+    }
+    const g = byDrug.get(r.code);
+    g.patients.add(r.pid);
+    g.qty += r.qty;
+    g.amount += r.amount || 0;
+  }
+  return [...byDrug.values()].map((g) => ({
+    code: g.code,
+    name: g.name,
+    categoryKey: g.categoryKey,
+    categoryLabel: g.categoryLabel,
+    patientCount: g.patients.size,
+    qty: g.qty,
+    amount: g.amount,
+  }));
+}
+
+module.exports = {
+  CATEGORIES,
+  DISPENSING_EXPORT_CATEGORY_KEYS,
+  categories,
+  list,
+  whereForKeys,
+  transactionsForDate,
+  aggregateByDrug,
+};

@@ -25,7 +25,11 @@
       "Bash(node --check gas/_c.js)",
       "Bash(rm -f gas/_c.js)",
       "Bash(cp gas/LineBot.gs gas/_c.js)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(node \"C:/Users/joypi/AppData/Local/Temp/claude/D--Programs-connectDB/74c5b0c7-55c6-469b-905d-7e1217c09ab0/scratchpad/test-conn.js\")",
+      "Bash(NODE_PATH=\"D:/Programs/connectDB/node_modules\" node \"C:/Users/joypi/AppData/Local/Temp/claude/D--Programs-connectDB/74c5b0c7-55c6-469b-905d-7e1217c09ab0/scratchpad/test-conn.js\")",
+      "Bash(NODE_PATH=\"D:/Programs/connectDB/node_modules\" node \"C:/Users/joypi/AppData/Local/Temp/claude/D--Programs-connectDB/74c5b0c7-55c6-469b-905d-7e1217c09ab0/scratchpad/find-drug.js\")",
+      "Bash(NODE_PATH=\"D:/Programs/connectDB/node_modules\" node \"C:/Users/joypi/AppData/Local/Temp/claude/D--Programs-connectDB/74c5b0c7-55c6-469b-905d-7e1217c09ab0/scratchpad/stock.js\")"
     ]
   }
 }

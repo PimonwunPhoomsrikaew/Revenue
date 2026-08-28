@@ -5,6 +5,8 @@
 //   node export-drugs.js 01 03 05        # only the given category keys
 //   node export-drugs.js --list          # show available categories + counts
 //   node export-drugs.js 01 -o ยา.xlsx   # custom output filename
+//   node export-drugs.js --date 2026-08-21   # also append per-category
+//                                              transaction sheets for that day
 //
 // Category keys are the cdrug.drugtype codes (01,02,03,04,05,06,07,10,91)
 // plus "_none" for items with no type. See drugs.js for the Thai labels.
@@ -24,9 +26,11 @@ async function main() {
   }
 
   let out = 'drugs-export.xlsx';
+  let date;
   const keys = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '-o' || argv[i] === '--out') out = argv[++i];
+    else if (argv[i] === '--date') date = argv[++i];
     else keys.push(argv[i]);
   }
 
@@ -35,9 +39,10 @@ async function main() {
     console.error('ไม่พบรายการสำหรับหมวดที่เลือก');
     process.exit(1);
   }
-  const wb = buildWorkbook(rows);
+  const transactions = date ? await drugs.transactionsForDate(date, date, keys) : undefined;
+  const wb = buildWorkbook(rows, date ? { dateLabel: date, transactions } : undefined);
   await wb.xlsx.writeFile(out);
-  console.log(`สร้างไฟล์สำเร็จ: ${out}  (${rows.length} รายการ${keys.length ? `, หมวด: ${keys.join(', ')}` : ', ทุกหมวด'})`);
+  console.log(`สร้างไฟล์สำเร็จ: ${out}  (${rows.length} รายการ${keys.length ? `, หมวด: ${keys.join(', ')}` : ', ทุกหมวด'}${date ? `, ทรานแซคชันวันที่ ${date}` : ''})`);
 }
 
 main()

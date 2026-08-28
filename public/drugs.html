@@ -27,10 +27,53 @@
       <p class="hint">กำลังโหลดหมวด…</p>
     </section>
 
-    <section class="controls" style="gap:12px;">
+    <section class="controls" style="gap:12px; flex-wrap:wrap;">
       <span id="selInfo" class="hint">ยังไม่ได้เลือกหมวด</span>
       <button id="preview" type="button">👁 ดูตัวอย่าง</button>
+      <label>จากวันที่ <input type="date" id="txDateFrom" /></label>
+      <label>ถึงวันที่ <input type="date" id="txDateTo" /></label>
+      <button id="viewTxSummary" type="button">📊 ดูยอดจ่ายยา</button>
       <button id="export" type="button">⬇ Export Excel (.xlsx)</button>
+    </section>
+    <p class="hint">ช่วงวันที่ใช้ทั้งสำหรับ "ดูยอดจ่ายยา" ด้านล่าง และแนบชีตทรานแซคชันต่อท้ายแต่ละหมวดตอน Export — เว้นว่างถ้าไม่ต้องการชีตทรานแซคชันใน Export</p>
+
+    <section id="txSummaryWrap" class="detail hidden">
+      <h2 id="txSummaryTitle"></h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>รหัสยา-เวชภัณฑ์</th><th>ชื่อยา</th><th>หมวด</th>
+            <th>จำนวนคนไข้</th><th>จำนวนที่จ่าย</th>
+          </tr>
+        </thead>
+        <tbody id="txSummaryBody"></tbody>
+      </table>
+    </section>
+
+    <section class="controls" style="flex-wrap:wrap; gap:10px; margin-top:28px;">
+      <strong style="align-self:center;">Export ยอดจ่ายรายวัน (เลือกรายการยาที่ต้องการ Export):</strong>
+    </section>
+
+    <section class="controls" style="gap:12px; flex-wrap:wrap;">
+      <label>หมวด
+        <select id="dispCategory">
+          <option value="">— เลือกหมวด —</option>
+        </select>
+      </label>
+      <label>ค้นหา <input type="text" id="dispSearch" placeholder="ชื่อยา หรือ รหัสยา…" /></label>
+      <label>จากวันที่ <input type="date" id="dispDateFrom" /></label>
+      <label>ถึงวันที่ <input type="date" id="dispDateTo" /></label>
+    </section>
+
+    <div id="dispItemList" class="item-list">
+      <p class="hint">เลือกหมวดเพื่อโหลดรายการยา…</p>
+    </div>
+
+    <div id="dispChipList" class="chip-list"></div>
+
+    <section class="controls" style="gap:12px; flex-wrap:wrap;">
+      <span id="dispSelInfo" class="hint">ยังไม่ได้เลือกรายการยา</span>
+      <button id="dispExport" type="button" disabled>⬇ Export ยอดจ่ายรายวัน (.xlsx)</button>
     </section>
 
     <section id="previewWrap" class="detail hidden">

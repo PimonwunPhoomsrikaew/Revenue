@@ -4,7 +4,7 @@ const session = require('express-session');
 const config = require('./config');
 const db = require('./db');
 const drugs = require('./drugs');
-const { buildWorkbook } = require('./drug-export');
+const { buildWorkbook, buildDispensingWorkbook } = require('./drug-export');
 const { buildWorkbook: buildPatientWorkbook } = require('./patient-export');
 
 const app = express();
@@ -62,7 +62,7 @@ app.get('/api/daily', requireAuth, async (req, res) => {
   }
 });
 
-// Per-day counts of the 10 PPFS categories over a range, for the trend chart.
+// Per-day counts of the 13 PPFS categories over a range, for the trend chart.
 app.get('/api/category-trend', requireAuth, async (req, res) => {
   try {
     let { from, to } = req.query;
@@ -81,7 +81,7 @@ app.get('/api/category-trend', requireAuth, async (req, res) => {
   }
 });
 
-// Whole-year totals of the 10 PPFS categories for calendar years 2024-2026
+// Whole-year totals of the 13 PPFS categories for calendar years 2024-2026
 // (พ.ศ. 2567-2569), for the yearly grouped-bar summary.
 app.get('/api/category-yearly', requireAuth, async (req, res) => {
   try {
@@ -115,7 +115,7 @@ app.get('/api/patients', requireAuth, async (req, res) => {
 });
 
 // Export the patient list for the three screening services (Z13.0 ยาเสริมธาตุเหล็ก,
-// Z12.4 HPV, Z12.1 Fit test) over a date range as an .xlsx file, one sheet each.
+// Z11.5 HPV, Z12.1 Fit test) over a date range as an .xlsx file, one sheet each.
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD
 app.get('/api/screening/export', requireAuth, async (req, res) => {
   try {
@@ -156,6 +156,21 @@ app.get('/api/drug-categories', requireAuth, async (req, res) => {
   }
 });
 
+// The curated 5-category subset (+ live counts) offered by the dedicated
+// "ยอดจ่ายรายวัน" export picker, in its fixed display order.
+app.get('/api/drug-categories/dispensing', requireAuth, async (req, res) => {
+  try {
+    const all = await drugs.categories();
+    const byKey = new Map(all.map((c) => [c.key, c]));
+    const categories = drugs.DISPENSING_EXPORT_CATEGORY_KEYS
+      .map((key) => byKey.get(key))
+      .filter(Boolean);
+    res.json({ categories });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // JSON preview of the master list for the selected categories.
 // ?types=01,03,05  (omit for all categories)
 app.get('/api/drugs', requireAuth, async (req, res) => {
@@ -168,23 +183,96 @@ app.get('/api/drugs', requireAuth, async (req, res) => {
   }
 });
 
+// Resolves the from/to range for the drug summary/export endpoints.
+// Accepts ?from=&to= (range) or the legacy single ?date=. Returns null if
+// no valid range was given.
+function drugDateRange(query) {
+  const from = query.from || query.date;
+  const to = query.to || query.date;
+  if (!DATE_RE.test(from || '') || !DATE_RE.test(to || '') || from > to) return null;
+  return { from, to };
+}
+
+// Per-drug summary for a date range: how many patients received each drug
+// and how much was dispensed in total. ?from=YYYY-MM-DD&to=YYYY-MM-DD&types=01,03
+// (or the legacy ?date=YYYY-MM-DD for a single day).
+app.get('/api/drugs/summary', requireAuth, async (req, res) => {
+  try {
+    const range = drugDateRange(req.query);
+    if (!range) {
+      return res.status(400).json({ error: 'รูปแบบวันที่ไม่ถูกต้อง หรือช่วงวันที่ไม่ถูกต้อง (YYYY-MM-DD)' });
+    }
+    const keys = (req.query.types || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const txRows = await drugs.transactionsForDate(range.from, range.to, keys);
+    const summary = drugs
+      .aggregateByDrug(txRows)
+      .sort((a, b) => a.categoryKey.localeCompare(b.categoryKey) || a.name.localeCompare(b.name));
+    res.json({ from: range.from, to: range.to, count: summary.length, drugs: summary });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Download the selected categories as an .xlsx file.
 // ?types=01,03,05  (omit for all categories)
+// ?from=YYYY-MM-DD&to=YYYY-MM-DD (optional, or legacy ?date=) also appends a
+// per-category sheet with that range's dispensing transactions (summary +
+// per-visit detail).
 app.get('/api/drugs/export', requireAuth, async (req, res) => {
   try {
     const keys = (req.query.types || '').split(',').map((s) => s.trim()).filter(Boolean);
-    const rows = await drugs.list(keys);
+    const range = drugDateRange(req.query);
+    const [rows, transactions] = await Promise.all([
+      drugs.list(keys),
+      range ? drugs.transactionsForDate(range.from, range.to, keys) : Promise.resolve(undefined),
+    ]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'ไม่พบรายการสำหรับหมวดที่เลือก' });
     }
-    const wb = buildWorkbook(rows);
+    const dateLabel = range && (range.from === range.to ? range.from : `${range.from} ถึง ${range.to}`);
+    const fileSuffix = range && (range.from === range.to ? `-${range.from}` : `-${range.from}_to_${range.to}`);
+    const wb = buildWorkbook(rows, range ? { dateLabel, transactions } : undefined);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
     res.setHeader(
       'Content-Disposition',
-      'attachment; filename="drugs-export.xlsx"'
+      `attachment; filename="drugs-export${fileSuffix || ''}.xlsx"`
+    );
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Dedicated "ยอดจ่ายรายวัน" export: a per-drug summary + per-visit detail
+// for explicitly selected drug items over a date range. Unlike
+// /api/drugs/export, this always requires specific drug codes (no
+// whole-category export) and never bundles the master price-list sheets.
+// ?codes=1ace,Acyc800&from=YYYY-MM-DD&to=YYYY-MM-DD
+app.get('/api/drugs/dispensing-export', requireAuth, async (req, res) => {
+  try {
+    const codes = (req.query.codes || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (codes.length === 0) {
+      return res.status(400).json({ error: 'กรุณาเลือกรายการยาที่ต้องการ Export' });
+    }
+    const range = drugDateRange(req.query);
+    if (!range) {
+      return res.status(400).json({ error: 'รูปแบบวันที่ไม่ถูกต้อง หรือช่วงวันที่ไม่ถูกต้อง (YYYY-MM-DD)' });
+    }
+    const transactions = await drugs.transactionsForDate(range.from, range.to, [], codes);
+    const dateLabel = range.from === range.to ? range.from : `${range.from} ถึง ${range.to}`;
+    const fileSuffix = range.from === range.to ? range.from : `${range.from}_to_${range.to}`;
+    const wb = buildDispensingWorkbook(transactions, dateLabel);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="yodjaiyarayvun-${fileSuffix}.xlsx"`
     );
     await wb.xlsx.write(res);
     res.end();

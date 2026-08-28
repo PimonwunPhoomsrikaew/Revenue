@@ -1,6 +1,9 @@
 // Application configuration.
 // Credentials are loaded from the .env file (see .env.example).
-require('dotenv').config();
+// Load .env from this file's own directory so it is found both when run from
+// source and when packaged inside the Electron app (asar) as a portable .exe.
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 module.exports = {
   port: process.env.PORT || 3000,

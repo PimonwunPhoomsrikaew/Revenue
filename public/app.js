@@ -12,7 +12,7 @@ const YEAR_COLORS = ['#4363d8', '#3cb44b', '#f58231'];
 const TREND_COLORS = [
   '#e6194b', '#3cb44b', '#f58231', '#4363d8', '#911eb4',
   '#42d4f4', '#bfa100', '#f032e6', '#469990', '#9a6324',
-  '#808000', '#000075',
+  '#808000', '#000075', '#e6beff',
 ];
 
 function fmt(d) {
@@ -122,9 +122,36 @@ function renderTrend(trend) {
       },
     },
   });
+  renderTrendTotals(trend);
 }
 
-// Whole-year totals for the 10 PPFS categories (fixed years 67-69), shown as a
+// Sum each PPFS series over the selected range and show them as chips below
+// the trend chart, so the total per service is visible without reading the
+// line chart point by point.
+function renderTrendTotals(trend) {
+  const wrap = document.getElementById('trendTotals');
+  if (!trend.series || !trend.series.length) {
+    wrap.innerHTML = '';
+    return;
+  }
+  const totals = trend.series.map((s) => ({
+    label: s.label,
+    total: s.data.reduce((sum, v) => sum + Number(v || 0), 0),
+  }));
+  wrap.innerHTML =
+    '<div class="cat-title">ยอดรวมแต่ละบริการ (ช่วงที่เลือก)</div>' +
+    '<div class="cat-grid">' +
+    totals
+      .map(
+        (t) =>
+          `<div class="cat-chip"><div class="cat-count">${t.total.toLocaleString()}</div>` +
+          `<div class="cat-label">${t.label}</div></div>`
+      )
+      .join('') +
+    '</div>';
+}
+
+// Whole-year totals for the 13 PPFS categories (fixed years 67-69), shown as a
 // grouped bar chart: one group per category, one bar per year. Loaded once at
 // startup — it does not depend on the date-range picker.
 async function loadYearly() {

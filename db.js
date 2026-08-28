@@ -44,7 +44,7 @@ async function dailyCounts(from, to) {
             COUNT(DISTINCT v.pid) AS patients,
             COUNT(DISTINCT v.visitno) AS visits,
             COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z13.0' THEN v.pid END) AS z130,
-            COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.4' THEN v.pid END) AS z124,
+            COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' THEN v.pid END) AS z124,
             COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.1' THEN v.pid END) AS z121
      FROM visit v
      LEFT JOIN visitdiag vd
@@ -77,7 +77,7 @@ async function patientsOnDay(date) {
     `SELECT v.visitno, v.pid, v.timestart,
             pn.prename AS pre, p.fname, p.lname,
             MAX(vd.diagcode = 'Z13.0')      AS z130,
-            MAX(vd.diagcode = 'Z12.4')      AS z124,
+            MAX(vd.diagcode = 'Z11.5')      AS z124,
             MAX(vd.diagcode = 'Z12.1')      AS z121,
             MAX(vd.diagcode REGEXP '^U[5-7]') AS ttm,
             MAX(dc.visitno IS NOT NULL)     AS dental
@@ -113,15 +113,16 @@ async function patientsOnDay(date) {
 }
 
 // Counts per service category on a single day. Each category has its own rule:
-//   PRT            visitdiag Z32.0 / Z32.1                          (distinct persons)
-//   HPV            visitdiag Z12.4, female, age 30–59               (distinct persons)
+//   PRT (ยังไม่ยืนยัน)  visitdiag Z32.0                              (distinct persons)
+//   PRT (ยืนยันแล้ว)    visitdiag Z32.1                              (distinct persons)
+//   HPV            visitdiag Z11.5, female, age 30–59               (distinct persons)
 //   Fit Test       visitdiag Z12.1, any sex, age 50–70              (distinct persons)
-//   herbal drug    visitdrug + cdrug.drugtype = '10'                (distinct persons)
+//   herbal drug    visitdiag U57.53 (จ่ายยาครีมไพล 30 กรัม)         (distinct persons)
 //   OP anywhere    pending central process — not held in JHCIS      (placeholder)
 //   iron tablets   visitdiag Z13.0, female, age 13–45               (distinct persons)
 //   contraceptive pill   visitdrug.drugcode '03'                    (packs = SUM unit)
 //   contraceptive inject visitdrug.drugcode 12 / DEPO-M / DEPO-M1   (distinct persons)
-//   EPI vaccine    visitepi.vaccinecode, exclude COVID% and 'dT'    (doses)
+//   EPI vaccine    visitdiag Z27.0–Z27.9                            (doses = row count)
 //   dT vaccine     visitdiag Z23.5 / Z23.6                          (distinct persons)
 // Age is taken at the visit date. Counts are per-day occurrences only — the
 // screening cycle (every 5/2/1 years) is program context and is NOT enforced.
@@ -130,20 +131,23 @@ async function categoryCounts(date) {
   // unfiltered here solely to feed the revenue calc (same basis as dailyCounts).
   const [[diag]] = await query(
     `SELECT
-        COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z32.0','Z32.1') THEN v.pid END) AS prt,
-        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.4' AND p.sex = '2'
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.0' THEN v.pid END) AS prt0,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.1' THEN v.pid END) AS prt1,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' AND p.sex = '2'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 30 AND 59
                             THEN v.pid END) AS hpv,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.1'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 50 AND 70
                             THEN v.pid END) AS fit,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'U57.53' THEN v.pid END) AS herbal,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z13.0' AND p.sex = '2'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 13 AND 45
                             THEN v.pid END) AS iron,
+        COUNT(CASE WHEN vd.diagcode BETWEEN 'Z27.0' AND 'Z27.9' THEN 1 END) AS epi,
         COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z23.5','Z23.6') THEN v.pid END) AS dt,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' THEN v.pid END) AS hep,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z13.0' THEN v.pid END) AS z130,
-        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.4' THEN v.pid END) AS z124,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' THEN v.pid END) AS z124,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.1' THEN v.pid END) AS z121
      FROM visit v
      LEFT JOIN person p
@@ -153,41 +157,30 @@ async function categoryCounts(date) {
      WHERE v.visitdate = ?`,
     [date]
   );
-  // Drug-based categories: herbal (by drugtype), contraceptive pill (packs) and
-  // injection (persons), all from visitdrug joined to the drug master.
+  // Drug-based categories: contraceptive pill (packs) and injection (persons),
+  // both from visitdrug.
   const [[drug]] = await query(
     `SELECT
-        COUNT(DISTINCT CASE WHEN c.drugtype = '10' THEN v.pid END) AS herbal,
         COALESCE(SUM(CASE WHEN dr.drugcode = '03' THEN dr.unit ELSE 0 END), 0) AS pills,
         COUNT(DISTINCT CASE WHEN dr.drugcode IN ('12','DEPO-M','DEPO-M1')
                             THEN v.pid END) AS inject
      FROM visit v
      JOIN visitdrug dr
             ON dr.pcucode = v.pcucode AND dr.visitno = v.visitno
-     LEFT JOIN cdrug c ON c.drugcode = dr.drugcode
      WHERE v.visitdate = ?`,
     [date]
   );
-  // EPI vaccine doses, excluding COVID series and dT (dT is counted separately).
-  const [[epi]] = await query(
-    `SELECT COUNT(*) AS n
-     FROM visit v
-     JOIN visitepi e ON e.pcucode = v.pcucode AND e.visitno = v.visitno
-     WHERE v.visitdate = ?
-       AND e.vaccinecode NOT LIKE 'COVID%'
-       AND e.vaccinecode <> 'dT'`,
-    [date]
-  );
   const categories = [
-    { key: 'prt', label: 'ทดสอบการตั้งครรภ์ (PRT)', count: Number(diag.prt) },
+    { key: 'prt0', label: 'ทดสอบการตั้งครรภ์ - ยังไม่ยืนยันว่าตั้งครรภ์ (Z32.0)', count: Number(diag.prt0) },
+    { key: 'prt1', label: 'ทดสอบการตั้งครรภ์ - ยืนยันว่าตั้งครรภ์ (Z32.1)', count: Number(diag.prt1) },
     { key: 'hpv', label: 'มะเร็งปากมดลูก (HPV)', count: Number(diag.hpv) },
     { key: 'fit', label: 'มะเร็งลำไส้ (Fit Test)', count: Number(diag.fit) },
-    { key: 'herbal', label: 'จ่ายยาสมุนไพร', count: Number(drug.herbal) },
+    { key: 'herbal', label: 'จ่ายยาสมุนไพร (ครีมไพล 30 กรัม)', count: Number(diag.herbal) },
     { key: 'opanywhere', label: 'OP anywhere (รอประมวลผลส่วนกลาง)', count: 'รอ' },
     { key: 'iron', label: 'ยาเสริมธาตุเหล็ก', count: Number(diag.iron) },
     { key: 'pill', label: 'ยาเม็ดคุมกำเนิด (แผง)', count: Number(drug.pills) },
     { key: 'inject', label: 'ยาฉีดคุมกำเนิด (คน)', count: Number(drug.inject) },
-    { key: 'epi', label: 'วัคซีน EPI (โดส)', count: Number(epi.n) },
+    { key: 'epi', label: 'วัคซีน EPI (โดส)', count: Number(diag.epi) },
     { key: 'dt', label: 'วัคซีน dT', count: Number(diag.dt) },
     { key: 'hepb', label: 'คัดกรองไวรัสตับอักเสบบี', count: Number(diag.hep) },
     { key: 'hepc', label: 'คัดกรองไวรัสตับอักเสบซี', count: Number(diag.hep) },
@@ -195,14 +188,16 @@ async function categoryCounts(date) {
   return { categories, revenue: revenueFor(diag) };
 }
 
-// The 10 PPFS categories, in display order. Shared by the daily-trend chart so
-// the line series stay aligned with the per-day category panel. 'opanywhere' has
-// no JHCIS source (pending central process) and is always 0 in the trend.
+// The 13 PPFS categories, in display order (PRT is split into unconfirmed/
+// confirmed). Shared by the daily-trend chart so the line series stay aligned
+// with the per-day category panel. 'opanywhere' has no JHCIS source (pending
+// central process) and is always 0 in the trend.
 const PPFS_CATEGORIES = [
-  { key: 'prt', label: 'ทดสอบการตั้งครรภ์ (PRT)' },
+  { key: 'prt0', label: 'ทดสอบการตั้งครรภ์ - ยังไม่ยืนยันว่าตั้งครรภ์ (Z32.0)' },
+  { key: 'prt1', label: 'ทดสอบการตั้งครรภ์ - ยืนยันว่าตั้งครรภ์ (Z32.1)' },
   { key: 'hpv', label: 'มะเร็งปากมดลูก (HPV)' },
   { key: 'fit', label: 'มะเร็งลำไส้ (Fit Test)' },
-  { key: 'herbal', label: 'จ่ายยาสมุนไพร' },
+  { key: 'herbal', label: 'จ่ายยาสมุนไพร (ครีมไพล 30 กรัม)' },
   { key: 'opanywhere', label: 'OP anywhere' },
   { key: 'iron', label: 'ยาเสริมธาตุเหล็ก' },
   { key: 'pill', label: 'ยาเม็ดคุมกำเนิด (แผง)' },
@@ -213,23 +208,26 @@ const PPFS_CATEGORIES = [
   { key: 'hepc', label: 'คัดกรองไวรัสตับอักเสบซี' },
 ];
 
-// Per-day counts of the 12 PPFS categories across an inclusive date range, for
+// Per-day counts of the 13 PPFS categories across an inclusive date range, for
 // the daily-trend line chart. Same per-category rules as categoryCounts(), but
 // grouped by visitdate. Returns aligned { dates, series } where each series is
 // one line: { key, label, data[] } indexed to dates.
 async function categoryDailyCounts(from, to) {
   const [diag] = await query(
     `SELECT v.visitdate AS date,
-        COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z32.0','Z32.1') THEN v.pid END) AS prt,
-        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.4' AND p.sex = '2'
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.0' THEN v.pid END) AS prt0,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.1' THEN v.pid END) AS prt1,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' AND p.sex = '2'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 30 AND 59
                             THEN v.pid END) AS hpv,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.1'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 50 AND 70
                             THEN v.pid END) AS fit,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'U57.53' THEN v.pid END) AS herbal,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z13.0' AND p.sex = '2'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 13 AND 45
                             THEN v.pid END) AS iron,
+        COUNT(CASE WHEN vd.diagcode BETWEEN 'Z27.0' AND 'Z27.9' THEN 1 END) AS epi,
         COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z23.5','Z23.6') THEN v.pid END) AS dt,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' THEN v.pid END) AS hep
      FROM visit v
@@ -243,31 +241,19 @@ async function categoryDailyCounts(from, to) {
   );
   const [drug] = await query(
     `SELECT v.visitdate AS date,
-        COUNT(DISTINCT CASE WHEN c.drugtype = '10' THEN v.pid END) AS herbal,
         COALESCE(SUM(CASE WHEN dr.drugcode = '03' THEN dr.unit ELSE 0 END), 0) AS pill,
         COUNT(DISTINCT CASE WHEN dr.drugcode IN ('12','DEPO-M','DEPO-M1')
                             THEN v.pid END) AS inject
      FROM visit v
      JOIN visitdrug dr
             ON dr.pcucode = v.pcucode AND dr.visitno = v.visitno
-     LEFT JOIN cdrug c ON c.drugcode = dr.drugcode
      WHERE v.visitdate BETWEEN ? AND ?
-     GROUP BY v.visitdate`,
-    [from, to]
-  );
-  const [epi] = await query(
-    `SELECT v.visitdate AS date, COUNT(*) AS epi
-     FROM visit v
-     JOIN visitepi e ON e.pcucode = v.pcucode AND e.visitno = v.visitno
-     WHERE v.visitdate BETWEEN ? AND ?
-       AND e.vaccinecode NOT LIKE 'COVID%'
-       AND e.vaccinecode <> 'dT'
      GROUP BY v.visitdate`,
     [from, to]
   );
 
   const blank = () => ({
-    prt: 0, hpv: 0, fit: 0, herbal: 0, opanywhere: 0,
+    prt0: 0, prt1: 0, hpv: 0, fit: 0, herbal: 0, opanywhere: 0,
     iron: 0, pill: 0, inject: 0, epi: 0, dt: 0, hepb: 0, hepc: 0,
   });
   const byDate = new Map();
@@ -277,15 +263,14 @@ async function categoryDailyCounts(from, to) {
   };
   diag.forEach((r) => {
     const o = at(r.date);
-    o.prt = Number(r.prt); o.hpv = Number(r.hpv); o.fit = Number(r.fit);
-    o.iron = Number(r.iron); o.dt = Number(r.dt);
+    o.prt0 = Number(r.prt0); o.prt1 = Number(r.prt1); o.hpv = Number(r.hpv); o.fit = Number(r.fit);
+    o.herbal = Number(r.herbal); o.iron = Number(r.iron); o.epi = Number(r.epi); o.dt = Number(r.dt);
     o.hepb = Number(r.hep); o.hepc = Number(r.hep);
   });
   drug.forEach((r) => {
     const o = at(r.date);
-    o.herbal = Number(r.herbal); o.pill = Number(r.pill); o.inject = Number(r.inject);
+    o.pill = Number(r.pill); o.inject = Number(r.inject);
   });
-  epi.forEach((r) => { at(r.date).epi = Number(r.epi); });
 
   const dates = [...byDate.keys()].sort();
   const series = PPFS_CATEGORIES.map((c) => ({
@@ -296,7 +281,7 @@ async function categoryDailyCounts(from, to) {
   return { dates, series };
 }
 
-// Yearly totals of the 10 PPFS categories for a fixed list of calendar years
+// Yearly totals of the 13 PPFS categories for a fixed list of calendar years
 // (CE). Same per-category rules as categoryCounts()/categoryDailyCounts(), but
 // each count is the whole-year total (1 Jan – 31 Dec). Returns aligned
 // { years, categories, series } where each series is one year:
@@ -308,16 +293,19 @@ async function categoryYearlyCounts(years = [2024, 2025, 2026]) {
 
   const [diag] = await query(
     `SELECT YEAR(v.visitdate) AS yr,
-        COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z32.0','Z32.1') THEN v.pid END) AS prt,
-        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.4' AND p.sex = '2'
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.0' THEN v.pid END) AS prt0,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.1' THEN v.pid END) AS prt1,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' AND p.sex = '2'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 30 AND 59
                             THEN v.pid END) AS hpv,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z12.1'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 50 AND 70
                             THEN v.pid END) AS fit,
+        COUNT(DISTINCT CASE WHEN vd.diagcode = 'U57.53' THEN v.pid END) AS herbal,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z13.0' AND p.sex = '2'
                              AND TIMESTAMPDIFF(YEAR, p.birth, v.visitdate) BETWEEN 13 AND 45
                             THEN v.pid END) AS iron,
+        COUNT(CASE WHEN vd.diagcode BETWEEN 'Z27.0' AND 'Z27.9' THEN 1 END) AS epi,
         COUNT(DISTINCT CASE WHEN vd.diagcode IN ('Z23.5','Z23.6') THEN v.pid END) AS dt,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z11.5' THEN v.pid END) AS hep
      FROM visit v
@@ -331,46 +319,33 @@ async function categoryYearlyCounts(years = [2024, 2025, 2026]) {
   );
   const [drug] = await query(
     `SELECT YEAR(v.visitdate) AS yr,
-        COUNT(DISTINCT CASE WHEN c.drugtype = '10' THEN v.pid END) AS herbal,
         COALESCE(SUM(CASE WHEN dr.drugcode = '03' THEN dr.unit ELSE 0 END), 0) AS pill,
         COUNT(DISTINCT CASE WHEN dr.drugcode IN ('12','DEPO-M','DEPO-M1')
                             THEN v.pid END) AS inject
      FROM visit v
      JOIN visitdrug dr
             ON dr.pcucode = v.pcucode AND dr.visitno = v.visitno
-     LEFT JOIN cdrug c ON c.drugcode = dr.drugcode
      WHERE v.visitdate BETWEEN ? AND ?
-     GROUP BY YEAR(v.visitdate)`,
-    [from, to]
-  );
-  const [epi] = await query(
-    `SELECT YEAR(v.visitdate) AS yr, COUNT(*) AS epi
-     FROM visit v
-     JOIN visitepi e ON e.pcucode = v.pcucode AND e.visitno = v.visitno
-     WHERE v.visitdate BETWEEN ? AND ?
-       AND e.vaccinecode NOT LIKE 'COVID%'
-       AND e.vaccinecode <> 'dT'
      GROUP BY YEAR(v.visitdate)`,
     [from, to]
   );
 
   const blank = () => ({
-    prt: 0, hpv: 0, fit: 0, herbal: 0, opanywhere: 0,
+    prt0: 0, prt1: 0, hpv: 0, fit: 0, herbal: 0, opanywhere: 0,
     iron: 0, pill: 0, inject: 0, epi: 0, dt: 0, hepb: 0, hepc: 0,
   });
   const byYear = new Map(sorted.map((y) => [y, blank()]));
   const at = (yr) => byYear.get(Number(yr));
   diag.forEach((r) => {
     const o = at(r.yr); if (!o) return;
-    o.prt = Number(r.prt); o.hpv = Number(r.hpv); o.fit = Number(r.fit);
-    o.iron = Number(r.iron); o.dt = Number(r.dt);
+    o.prt0 = Number(r.prt0); o.prt1 = Number(r.prt1); o.hpv = Number(r.hpv); o.fit = Number(r.fit);
+    o.herbal = Number(r.herbal); o.iron = Number(r.iron); o.epi = Number(r.epi); o.dt = Number(r.dt);
     o.hepb = Number(r.hep); o.hepc = Number(r.hep);
   });
   drug.forEach((r) => {
     const o = at(r.yr); if (!o) return;
-    o.herbal = Number(r.herbal); o.pill = Number(r.pill); o.inject = Number(r.inject);
+    o.pill = Number(r.pill); o.inject = Number(r.inject);
   });
-  epi.forEach((r) => { const o = at(r.yr); if (o) o.epi = Number(r.epi); });
 
   const yearMeta = sorted.map((ce) => ({ ce, be: ce + 543, label: String((ce + 543) % 100) }));
   const categories = PPFS_CATEGORIES.map((c) => ({ key: c.key, label: c.label }));
@@ -387,7 +362,7 @@ async function categoryYearlyCounts(years = [2024, 2025, 2026]) {
 // worksheet in the patient-list export.
 const SCREENING_CODES = [
   { code: 'Z13.0', key: 'z130', label: 'ยาเสริมธาตุเหล็ก' },
-  { code: 'Z12.4', key: 'z124', label: 'HPV' },
+  { code: 'Z11.5', key: 'z124', label: 'HPV' },
   { code: 'Z12.1', key: 'z121', label: 'Fit test' },
 ];
 

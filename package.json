@@ -4,7 +4,9 @@
   "description": "JHCIS revenue/screening dashboard (read-only)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "desktop": "electron electron-main.js",
+    "build:exe": "electron-builder --win"
   },
   "engines": {
     "node": "22.x"
@@ -15,5 +17,35 @@
     "express": "^5.2.1",
     "express-session": "^1.19.0",
     "mysql2": "^3.22.4"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.jhcis.dashboard",
+    "productName": "JHCIS-Dashboard",
+    "directories": {
+      "output": "dist"
+    },
+    "extraMetadata": {
+      "main": "electron-main.js"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!.git/**",
+      ".env"
+    ],
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": true,
+      "artifactName": "JHCIS-Dashboard-Setup.exe"
+    },
+    "portable": {
+      "artifactName": "JHCIS-Dashboard.exe"
+    }
   }
 }

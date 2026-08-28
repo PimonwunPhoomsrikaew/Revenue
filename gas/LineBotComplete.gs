@@ -12,7 +12,7 @@
  *
  * รายการ PPFS:
  *   1) ทดสอบการตั้งครรภ์ (PRT)   75  ← Z32.0, Z32.1
- *   2) มะเร็งปากมดลูก (HPV)      50  ← Z12.4 | หญิง อายุ 30-59 | รอบ 5 ปี
+ *   2) มะเร็งปากมดลูก (HPV)      50  ← Z11.5 | หญิง อายุ 30-59 | รอบ 5 ปี
  *   3) มะเร็งลำไส้ (Fit Test)    60  ← Z12.1 | อายุ 50-70 | รอบ 2 ปี
  *   4) จ่ายยาสมุนไพร (ไพล)           ← นับคน + รวม realprice จาก cdrug ที่ชื่อมี "ไพล"
  *   5) OP anywhere             (อยู่ระหว่างประมวลผล)
@@ -42,7 +42,7 @@ var PPFS = { prt: 75, hpv: 50, fit: 60, iron: 80, pill: 40, inject: 60, epi: 20,
 var SCREEN = {
   // sex: '2'=เฉพาะหญิง, ไม่ระบุ=ทุกเพศ  (person.sex 1=ชาย, 2=หญิง)
   iron: { code: 'Z13.0', ageLo: 13, ageHi: 45, cycle: 1, rate: 80, sex: '2' },
-  hpv:  { code: 'Z12.4', ageLo: 30, ageHi: 59, cycle: 5, rate: 50, sex: '2' },
+  hpv:  { code: 'Z11.5', ageLo: 30, ageHi: 59, cycle: 5, rate: 50, sex: '2' },
   fit:  { code: 'Z12.1', ageLo: 50, ageHi: 70, cycle: 2, rate: 60 },
 };
 var PILL_CODES = ['03'];                 // ยาเม็ดคุม (นับแผง จาก visitdrug)
@@ -181,13 +181,13 @@ function fetchPPPerson_(cid) {
       'SELECT ' +
       "  MAX(CASE WHEN vd.diagcode='Z13.0' THEN v.visitdate END) iron_last, " +
       "  MAX(CASE WHEN vd.diagcode='Z13.0' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.iron.cycle + " YEAR) THEN 1 ELSE 0 END) iron_in, " +
-      "  MAX(CASE WHEN vd.diagcode='Z12.4' THEN v.visitdate END) hpv_last, " +
-      "  MAX(CASE WHEN vd.diagcode='Z12.4' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.hpv.cycle + " YEAR) THEN 1 ELSE 0 END) hpv_in, " +
+      "  MAX(CASE WHEN vd.diagcode='Z11.5' THEN v.visitdate END) hpv_last, " +
+      "  MAX(CASE WHEN vd.diagcode='Z11.5' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.hpv.cycle + " YEAR) THEN 1 ELSE 0 END) hpv_in, " +
       "  MAX(CASE WHEN vd.diagcode='Z12.1' THEN v.visitdate END) fit_last, " +
       "  MAX(CASE WHEN vd.diagcode='Z12.1' AND v.visitdate>=DATE_SUB(CURDATE(),INTERVAL " + SCREEN.fit.cycle + " YEAR) THEN 1 ELSE 0 END) fit_in " +
       'FROM visit v JOIN visitdiag vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno ' +
       "WHERE v.pcucodeperson='" + pc + "' AND v.pid=" + pid + " AND v.flagservice NOT IN ('99') " +
-      "AND vd.diagcode IN ('Z13.0','Z12.4','Z12.1')"
+      "AND vd.diagcode IN ('Z13.0','Z11.5','Z12.1')"
     );
     var hist = {};
     if (h.next()) ['iron_last','iron_in','hpv_last','hpv_in','fit_last','fit_in'].forEach(function (k) { hist[k] = h.getString(k); });
