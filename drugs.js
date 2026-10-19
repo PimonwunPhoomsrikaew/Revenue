@@ -59,8 +59,8 @@ function whereForKeys(keys) {
 }
 
 // All categories with a live row count, for building the selection UI.
-async function categories() {
-  const [rows] = await db.pool.query(
+async function categories(branchId) {
+  const [rows] = await db.getPool(branchId).query(
     `SELECT drugtype, COUNT(*) n FROM cdrug GROUP BY drugtype`
   );
   const counts = new Map();
@@ -82,9 +82,9 @@ async function categories() {
 //   name  -> ชื่อยา (cdrug.drugname, exactly as stored in the database)
 //   cost  -> ราคาทุน (cdrug.cost)
 //   sell  -> ราคาขาย (cdrug.sell)
-async function list(keys) {
+async function list(branchId, keys) {
   const { where, params } = whereForKeys(keys);
-  const [rows] = await db.pool.query(
+  const [rows] = await db.getPool(branchId).query(
     `SELECT drugcode AS code,
             drugname AS name,
             cost, sell,
@@ -122,12 +122,12 @@ async function list(keys) {
 //   name       -> cdrug.drugname
 //   qty        -> visitdrug.unit
 //   amount     -> visitdrug.realprice
-async function transactionsForDate(dateFrom, dateTo, keys, codes) {
+async function transactionsForDate(branchId, dateFrom, dateTo, keys, codes) {
   const { where, params } = whereForKeys(keys);
   const catFilter = where ? where.replace('WHERE ', 'AND (') + ')' : '';
   const codesFilter = codes && codes.length ? ` AND vd.drugcode IN (${codes.map(() => '?').join(',')})` : '';
   const codesParams = codes && codes.length ? codes : [];
-  const [rows] = await db.pool.query(
+  const [rows] = await db.getPool(branchId).query(
     `SELECT v.visitdate       AS date,
             v.timestart       AS time,
             v.visitno         AS visitno,
@@ -202,12 +202,58 @@ function aggregateByDrug(txRows) {
   }));
 }
 
+// Categories covered by the "ยอดยาคงเหลือ" (current remaining stock) sheet —
+// medicine only, not supplies/vaccines/services.
+const REMAINING_STOCK_CATEGORY_KEYS = ['01', '10'];
+
+// Current remaining stock for every medicine item, from JHCIS's live
+// `cdrugremain` balance table. A branch's database can hold more than one
+// pcucode (e.g. a sub-unit's stock alongside the main facility's), so
+// balances are summed per drug across every pcucode in this branch's DB —
+// there is no per-date history in JHCIS, `remain` is always the current
+// balance; the caller supplies a date only to label the report.
+//   code   -> cdrugremain.drugcode
+//   name   -> cdrug.drugname
+//   unit   -> cdrug.unitusage (e.g. เม็ด, ซอง, ขวด)
+//   remain -> SUM(cdrugremain.remain)
+async function remaining(branchId) {
+  const codes = REMAINING_STOCK_CATEGORY_KEYS.map((k) => BY_KEY.get(k).code);
+  const [rows] = await db.getPool(branchId).query(
+    `SELECT r.drugcode AS code,
+            c.drugname AS name,
+            c.unitusage AS unit,
+            c.drugtype AS drugtype,
+            SUM(r.remain) AS remain
+     FROM cdrugremain r
+     JOIN cdrug c ON c.drugcode = r.drugcode
+     WHERE c.drugtype IN (?)
+     GROUP BY r.drugcode, c.drugname, c.unitusage, c.drugtype
+     HAVING SUM(r.remain) IS NOT NULL`,
+    [codes]
+  );
+  return rows
+    .map((r) => {
+      const cat = categoryFor(r.drugtype);
+      return {
+        code: r.code,
+        name: r.name === null ? '' : r.name,
+        unit: r.unit || '',
+        categoryKey: cat.key,
+        categoryLabel: cat.label,
+        remain: Number(r.remain),
+      };
+    })
+    .sort((a, b) => a.categoryKey.localeCompare(b.categoryKey) || a.name.localeCompare(b.name));
+}
+
 module.exports = {
   CATEGORIES,
   DISPENSING_EXPORT_CATEGORY_KEYS,
+  REMAINING_STOCK_CATEGORY_KEYS,
   categories,
   list,
   whereForKeys,
   transactionsForDate,
   aggregateByDrug,
+  remaining,
 };

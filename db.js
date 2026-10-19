@@ -1,7 +1,24 @@
 const mysql = require('mysql2/promise');
 const config = require('./config');
 
-const pool = mysql.createPool(config.db);
+// One MySQL connection pool per JHCIS branch, created lazily on first use and
+// cached by branch id so every caller for a given branch shares the same pool.
+const pools = new Map();
+
+function getPool(branchId) {
+  if (pools.has(branchId)) return pools.get(branchId);
+  const branch = config.branches.find((b) => b.id === branchId);
+  if (!branch) throw new Error(`Unknown branch: ${branchId}`);
+  const pool = mysql.createPool(branch.db);
+  pools.set(branchId, pool);
+  return pool;
+}
+
+// Closes every pool opened so far. For short-lived CLI scripts (see
+// export-drugs.js) so the process can exit once its query is done.
+async function closeAll() {
+  await Promise.all([...pools.values()].map((p) => p.end()));
+}
 
 // Connection errors that mean a pooled connection went stale (server closed it
 // while idle). Safe to retry once on a freshly-opened connection.
@@ -12,8 +29,10 @@ const TRANSIENT = new Set([
   'ETIMEDOUT',
 ]);
 
-// pool.query wrapper that retries once when a stale connection is dropped.
-async function query(sql, params) {
+// pool.query wrapper (scoped to one branch's pool) that retries once when a
+// stale connection is dropped.
+async function query(branchId, sql, params) {
+  const pool = getPool(branchId);
   try {
     return await pool.query(sql, params);
   } catch (e) {
@@ -38,8 +57,9 @@ function revenueFor(counts) {
 
 // Patients (distinct persons) per day within an inclusive date range, with the
 // per-day revenue from the three paid diagnosis codes.
-async function dailyCounts(from, to) {
+async function dailyCounts(branchId, from, to) {
   const [rows] = await query(
+    branchId,
     `SELECT v.visitdate AS date,
             COUNT(DISTINCT v.pid) AS patients,
             COUNT(DISTINCT v.visitno) AS visits,
@@ -72,8 +92,9 @@ const SERVICE_LABELS = {
 };
 
 // Patient list for a single day, with the tracked services each one received.
-async function patientsOnDay(date) {
+async function patientsOnDay(branchId, date) {
   const [rows] = await query(
+    branchId,
     `SELECT v.visitno, v.pid, v.timestart,
             pn.prename AS pre, p.fname, p.lname,
             MAX(vd.diagcode = 'Z13.0')      AS z130,
@@ -126,10 +147,11 @@ async function patientsOnDay(date) {
 //   dT vaccine     visitdiag Z23.5 / Z23.6                          (distinct persons)
 // Age is taken at the visit date. Counts are per-day occurrences only — the
 // screening cycle (every 5/2/1 years) is program context and is NOT enforced.
-async function categoryCounts(date) {
+async function categoryCounts(branchId, date) {
   // Diagnosis-based categories (need person age/sex). z130/z124/z121 are kept
   // unfiltered here solely to feed the revenue calc (same basis as dailyCounts).
   const [[diag]] = await query(
+    branchId,
     `SELECT
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.0' THEN v.pid END) AS prt0,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.1' THEN v.pid END) AS prt1,
@@ -160,6 +182,7 @@ async function categoryCounts(date) {
   // Drug-based categories: contraceptive pill (packs) and injection (persons),
   // both from visitdrug.
   const [[drug]] = await query(
+    branchId,
     `SELECT
         COALESCE(SUM(CASE WHEN dr.drugcode = '03' THEN dr.unit ELSE 0 END), 0) AS pills,
         COUNT(DISTINCT CASE WHEN dr.drugcode IN ('12','DEPO-M','DEPO-M1')
@@ -212,8 +235,9 @@ const PPFS_CATEGORIES = [
 // the daily-trend line chart. Same per-category rules as categoryCounts(), but
 // grouped by visitdate. Returns aligned { dates, series } where each series is
 // one line: { key, label, data[] } indexed to dates.
-async function categoryDailyCounts(from, to) {
+async function categoryDailyCounts(branchId, from, to) {
   const [diag] = await query(
+    branchId,
     `SELECT v.visitdate AS date,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.0' THEN v.pid END) AS prt0,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.1' THEN v.pid END) AS prt1,
@@ -240,6 +264,7 @@ async function categoryDailyCounts(from, to) {
     [from, to]
   );
   const [drug] = await query(
+    branchId,
     `SELECT v.visitdate AS date,
         COALESCE(SUM(CASE WHEN dr.drugcode = '03' THEN dr.unit ELSE 0 END), 0) AS pill,
         COUNT(DISTINCT CASE WHEN dr.drugcode IN ('12','DEPO-M','DEPO-M1')
@@ -286,12 +311,13 @@ async function categoryDailyCounts(from, to) {
 // each count is the whole-year total (1 Jan – 31 Dec). Returns aligned
 // { years, categories, series } where each series is one year:
 //   { ce, be, label, data[] } with data[] indexed to PPFS_CATEGORIES order.
-async function categoryYearlyCounts(years = [2024, 2025, 2026]) {
+async function categoryYearlyCounts(branchId, years = [2024, 2025, 2026]) {
   const sorted = [...years].sort((a, b) => a - b);
   const from = `${sorted[0]}-01-01`;
   const to = `${sorted[sorted.length - 1]}-12-31`;
 
   const [diag] = await query(
+    branchId,
     `SELECT YEAR(v.visitdate) AS yr,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.0' THEN v.pid END) AS prt0,
         COUNT(DISTINCT CASE WHEN vd.diagcode = 'Z32.1' THEN v.pid END) AS prt1,
@@ -318,6 +344,7 @@ async function categoryYearlyCounts(years = [2024, 2025, 2026]) {
     [from, to]
   );
   const [drug] = await query(
+    branchId,
     `SELECT YEAR(v.visitdate) AS yr,
         COALESCE(SUM(CASE WHEN dr.drugcode = '03' THEN dr.unit ELSE 0 END), 0) AS pill,
         COUNT(DISTINCT CASE WHEN dr.drugcode IN ('12','DEPO-M','DEPO-M1')
@@ -371,9 +398,10 @@ const SCREENING_CODES = [
 // two of the services on the same visit appears once under each. Rows are
 // returned flat with the diagcode so callers can group them into per-service
 // sheets.
-async function screeningPatients(from, to) {
+async function screeningPatients(branchId, from, to) {
   const codes = SCREENING_CODES.map((c) => c.code);
   const [rows] = await query(
+    branchId,
     `SELECT DISTINCT
             vd.diagcode               AS diagcode,
             v.visitdate               AS date,
@@ -406,7 +434,9 @@ async function screeningPatients(from, to) {
 }
 
 module.exports = {
-  pool,
+  getPool,
+  closeAll,
+  query,
   dailyCounts,
   patientsOnDay,
   categoryCounts,

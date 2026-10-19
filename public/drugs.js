@@ -116,9 +116,11 @@ function exportXlsx() {
   const types = selectedKeys().join(',');
   const from = document.getElementById('txDateFrom').value;
   const to = document.getElementById('txDateTo').value;
+  const remainDate = document.getElementById('remainDate').value;
   // Let the browser handle the file download via the authenticated session.
   let url = `/api/drugs/export?types=${encodeURIComponent(types)}`;
   if (from && to) url += `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  if (remainDate) url += `&remainDate=${encodeURIComponent(remainDate)}`;
   window.location.href = url;
 }
 
@@ -250,12 +252,15 @@ document.getElementById('dispExport').addEventListener('click', exportDispensing
 (async () => {
   const me = await api('/api/me');
   if (!me.user) { location.href = '/login.html'; return; }
-  document.getElementById('who').textContent = `ผู้ใช้: ${me.user}`;
+  document.getElementById('who').textContent = me.branch
+    ? `ผู้ใช้: ${me.user} — ${me.branch}`
+    : `ผู้ใช้: ${me.user}`;
   const today = new Date().toISOString().slice(0, 10);
   document.getElementById('txDateFrom').value = today;
   document.getElementById('txDateTo').value = today;
   document.getElementById('dispDateFrom').value = today;
   document.getElementById('dispDateTo').value = today;
+  document.getElementById('remainDate').value = today;
   await loadCategories();
   await loadDispCategories();
   refreshDispState();

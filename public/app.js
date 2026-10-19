@@ -337,7 +337,9 @@ document.getElementById('logout').addEventListener('click', async () => {
 (async () => {
   const me = await api('/api/me');
   if (!me.user) { location.href = '/login.html'; return; }
-  document.getElementById('who').textContent = `ผู้ใช้: ${me.user}`;
+  document.getElementById('who').textContent = me.branch
+    ? `ผู้ใช้: ${me.user} — ${me.branch}`
+    : `ผู้ใช้: ${me.user}`;
   setDefaultRange();
   loadDaily();
   loadYearly();

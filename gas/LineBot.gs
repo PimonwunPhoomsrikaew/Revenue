@@ -36,6 +36,9 @@ var PILL_CODES = ['03'];
 // ยาฉีดคุม = มีทั้ง Z30.0 และ Z30.4 + มีรายการยา/บริการชื่อตรงแพตเทิร์นนี้ (ฉีดเข้ากล้ามเนื้อ)
 var INJECT_LIKE = '%ฉีด%กล้าม%';
 var EXCLUDE_FLAGSERVICE = ['99']; // visit ที่ยกเลิก — ไม่นับ
+// เช็ค PP: ไพลครีม — จับจากชื่อยาในประวัติ + ช่วงเวลาที่ย้อนดู (เดือน)
+var PHLAI_CREAM_LIKE = '%ไพล%ครีม%';
+var PHLAI_MONTHS = 1;
 
 // ==========================================
 // 2. Webhook — route ตามข้อความ
@@ -255,7 +258,20 @@ function fetchPPPerson_(cid) {
     );
     var hist = {};
     if (h.next()) ['iron_last','iron_in','hpv_last','hpv_in','fit_last','fit_in'].forEach(function (k) { hist[k] = h.getString(k); });
-    h.close(); st.close();
+    h.close();
+
+    // ไพลครีม: ได้รับใน N เดือนที่ผ่านมาไหม (จับจากชื่อยาในประวัติ)
+    var ph = st.executeQuery(
+      'SELECT MAX(v.visitdate) last FROM visit v ' +
+      'JOIN visitdrug vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno ' +
+      'JOIN cdrug cd ON cd.drugcode=vd.drugcode ' +
+      "WHERE v.pcucodeperson='" + pc + "' AND v.pid=" + pid + " AND v.flagservice NOT IN ('99') " +
+      "AND (cd.drugnamethai LIKE '" + PHLAI_CREAM_LIKE + "' OR cd.drugname LIKE '" + PHLAI_CREAM_LIKE + "') " +
+      'AND v.visitdate >= DATE_SUB(CURDATE(), INTERVAL ' + PHLAI_MONTHS + ' MONTH)'
+    );
+    var phlaiLast = null;
+    if (ph.next()) phlaiLast = ph.getString('last');
+    ph.close(); st.close();
 
     var services = [];
     var sexExcluded = false; // true = อายุเข้าช่วง แต่ถูกตัดเพราะเพศ (เช่น ชายที่เข้าช่วง HPV/ธาตุเหล็ก)
@@ -270,7 +286,7 @@ function fetchPPPerson_(cid) {
     add('iron', 'ยาเสริมธาตุเหล็ก', 'iron_last', 'iron_in');
     add('hpv', 'HPV (มะเร็งปากมดลูก)', 'hpv_last', 'hpv_in');
     add('fit', 'Fit Test (มะเร็งลำไส้)', 'fit_last', 'fit_in');
-    return { found: true, name: name, age: age, sex: sex, services: services, sexExcluded: sexExcluded };
+    return { found: true, name: name, age: age, sex: sex, services: services, sexExcluded: sexExcluded, phlaiLast: phlaiLast };
   } finally {
     conn.close();
   }
@@ -322,6 +338,20 @@ function buildPPCheckFlex_(info, cid) {
         { type: 'text', text: 'จ่ายได้ 10 ชิ้น/สัปดาห์', size: 'xs', color: '#16794c' },
       ],
     });
+  }
+
+  // ไพลครีม 30 กรัม — ได้รับใน 1 เดือนที่ผ่านมาไหม
+  body.push({ type: 'separator', margin: 'md' });
+  if (info.phlaiLast) {
+    body.push({ type: 'box', layout: 'vertical', margin: 'md', spacing: 'xs', contents: [
+      { type: 'text', text: '🧴 ไพลครีม 30 กรัม', size: 'sm', weight: 'bold', color: '#c0392b' },
+      { type: 'text', text: '   ⛔ ได้รับแล้วใน 1 เดือน (ล่าสุด ' + d2t(info.phlaiLast) + ')', size: 'xs', color: '#c0392b', wrap: true },
+    ] });
+  } else {
+    body.push({ type: 'box', layout: 'vertical', margin: 'md', spacing: 'xs', contents: [
+      { type: 'text', text: '🧴 ไพลครีม 30 กรัม', size: 'sm', weight: 'bold', color: '#03c75a' },
+      { type: 'text', text: '   ✅ ยังไม่ได้รับใน 1 เดือน (จ่ายได้)', size: 'xs', color: '#03c75a', wrap: true },
+    ] });
   }
 
   return {
@@ -377,8 +407,11 @@ function fetchPPFSByDate(d) {
     rso.close();
 
     var priorInCycle = function (code, years) {
+      var cond = Array.isArray(code)
+        ? 'd2.diagcode IN (' + inList(code) + ')'
+        : "d2.diagcode='" + code + "'";
       return 'EXISTS(SELECT 1 FROM visit v2 JOIN visitdiag d2 ON d2.pcucode=v2.pcucode AND d2.visitno=v2.visitno ' +
-        "WHERE v2.pcucodeperson=v.pcucodeperson AND v2.pid=v.pid AND d2.diagcode='" + code + "' " +
+        'WHERE v2.pcucodeperson=v.pcucodeperson AND v2.pid=v.pid AND ' + cond + ' ' +
         'AND v2.visitdate<' + Q + ' AND v2.visitdate>=DATE_SUB(' + Q + ', INTERVAL ' + years + ' YEAR)' + notCancelled('v2') + ')';
     };
     // ฐาน total/covered/due = ทุกเพศ (เพื่อให้เห็น ช/ญ) แต่ claim (PPFS) จำกัดเพศตาม cfg.sex
@@ -400,7 +433,7 @@ function fetchPPFSByDate(d) {
       'FROM ( SELECT v.pid pid, p.sex sex, TIMESTAMPDIFF(YEAR, p.birth, ' + Q + ') age, ' +
       "    MAX(vd.diagcode='" + I.code + "') tIron, MAX(vd.diagcode='" + H.code + "') tHpv, MAX(vd.diagcode='" + F.code + "') tFit, " +
       '    ' + priorInCycle(I.code, I.cycle) + ' rIron, ' +
-      '    ' + priorInCycle(H.code, H.cycle) + ' rHpv, ' +
+      '    ' + priorInCycle(['Z11.5', 'Z12.4'], H.cycle) + ' rHpv, ' +
       '    ' + priorInCycle(F.code, F.cycle) + ' rFit ' +
       '  FROM visit v JOIN person p ON p.pcucodeperson=v.pcucodeperson AND p.pid=v.pid ' +
       '  LEFT JOIN visitdiag vd ON vd.pcucode=v.pcucode AND vd.visitno=v.visitno ' +

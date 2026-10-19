@@ -19,16 +19,24 @@ app.use(
 );
 
 function requireAuth(req, res, next) {
-  if (req.session && req.session.user) return next();
+  if (req.session && req.session.user && req.session.branchId) return next();
   return res.status(401).json({ error: 'unauthorized' });
 }
 
 // ---- Auth ----
+// Each JHCIS branch is its own login. The matched branch's id is stored on
+// the session and used for every DB call for the rest of that session, so a
+// user only ever sees their own branch's data.
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body || {};
-  if (username === config.appUser && password === config.appPass) {
+  const branch = config.branches.find(
+    (b) => b.username === username && b.password === password
+  );
+  if (branch) {
     req.session.user = username;
-    return res.json({ ok: true, user: username });
+    req.session.branchId = branch.id;
+    req.session.branchName = branch.name;
+    return res.json({ ok: true, user: username, branch: branch.name });
   }
   return res.status(401).json({ ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
 });
@@ -38,7 +46,11 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/me', (req, res) => {
-  res.json({ user: (req.session && req.session.user) || null });
+  const s = req.session;
+  res.json({
+    user: (s && s.user) || null,
+    branch: (s && s.branchName) || null,
+  });
 });
 
 // ---- Data ----
@@ -55,7 +67,7 @@ app.get('/api/daily', requireAuth, async (req, res) => {
       d.setDate(d.getDate() - 29);
       from = d.toISOString().slice(0, 10);
     }
-    const rows = await db.dailyCounts(from, to);
+    const rows = await db.dailyCounts(req.session.branchId, from, to);
     res.json({ from, to, data: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -74,7 +86,7 @@ app.get('/api/category-trend', requireAuth, async (req, res) => {
       d.setDate(d.getDate() - 29);
       from = d.toISOString().slice(0, 10);
     }
-    const trend = await db.categoryDailyCounts(from, to);
+    const trend = await db.categoryDailyCounts(req.session.branchId, from, to);
     res.json({ from, to, ...trend });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -85,7 +97,7 @@ app.get('/api/category-trend', requireAuth, async (req, res) => {
 // (พ.ศ. 2567-2569), for the yearly grouped-bar summary.
 app.get('/api/category-yearly', requireAuth, async (req, res) => {
   try {
-    const yearly = await db.categoryYearlyCounts([2024, 2025, 2026]);
+    const yearly = await db.categoryYearlyCounts(req.session.branchId, [2024, 2025, 2026]);
     res.json(yearly);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -99,8 +111,8 @@ app.get('/api/patients', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)' });
     }
     const [rows, cat] = await Promise.all([
-      db.patientsOnDay(date),
-      db.categoryCounts(date),
+      db.patientsOnDay(req.session.branchId, date),
+      db.categoryCounts(req.session.branchId, date),
     ]);
     res.json({
       date,
@@ -128,7 +140,7 @@ app.get('/api/screening/export', requireAuth, async (req, res) => {
       d.setDate(d.getDate() - 29);
       from = d.toISOString().slice(0, 10);
     }
-    const rows = await db.screeningPatients(from, to);
+    const rows = await db.screeningPatients(req.session.branchId, from, to);
     const wb = buildPatientWorkbook(rows, from, to);
     res.setHeader(
       'Content-Type',
@@ -150,7 +162,7 @@ app.get('/api/screening/export', requireAuth, async (req, res) => {
 // Categories with live counts, for the selection UI.
 app.get('/api/drug-categories', requireAuth, async (req, res) => {
   try {
-    res.json({ categories: await drugs.categories() });
+    res.json({ categories: await drugs.categories(req.session.branchId) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -160,7 +172,7 @@ app.get('/api/drug-categories', requireAuth, async (req, res) => {
 // "ยอดจ่ายรายวัน" export picker, in its fixed display order.
 app.get('/api/drug-categories/dispensing', requireAuth, async (req, res) => {
   try {
-    const all = await drugs.categories();
+    const all = await drugs.categories(req.session.branchId);
     const byKey = new Map(all.map((c) => [c.key, c]));
     const categories = drugs.DISPENSING_EXPORT_CATEGORY_KEYS
       .map((key) => byKey.get(key))
@@ -176,7 +188,7 @@ app.get('/api/drug-categories/dispensing', requireAuth, async (req, res) => {
 app.get('/api/drugs', requireAuth, async (req, res) => {
   try {
     const keys = (req.query.types || '').split(',').map((s) => s.trim()).filter(Boolean);
-    const rows = await drugs.list(keys);
+    const rows = await drugs.list(req.session.branchId, keys);
     res.json({ count: rows.length, drugs: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -203,7 +215,7 @@ app.get('/api/drugs/summary', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'รูปแบบวันที่ไม่ถูกต้อง หรือช่วงวันที่ไม่ถูกต้อง (YYYY-MM-DD)' });
     }
     const keys = (req.query.types || '').split(',').map((s) => s.trim()).filter(Boolean);
-    const txRows = await drugs.transactionsForDate(range.from, range.to, keys);
+    const txRows = await drugs.transactionsForDate(req.session.branchId, range.from, range.to, keys);
     const summary = drugs
       .aggregateByDrug(txRows)
       .sort((a, b) => a.categoryKey.localeCompare(b.categoryKey) || a.name.localeCompare(b.name));
@@ -218,20 +230,27 @@ app.get('/api/drugs/summary', requireAuth, async (req, res) => {
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD (optional, or legacy ?date=) also appends a
 // per-category sheet with that range's dispensing transactions (summary +
 // per-visit detail).
+// ?remainDate=YYYY-MM-DD (optional) also appends a "ยอดยาคงเหลือ" sheet with
+// the current remaining stock of every medicine item, labelled with that date.
 app.get('/api/drugs/export', requireAuth, async (req, res) => {
   try {
     const keys = (req.query.types || '').split(',').map((s) => s.trim()).filter(Boolean);
     const range = drugDateRange(req.query);
-    const [rows, transactions] = await Promise.all([
-      drugs.list(keys),
-      range ? drugs.transactionsForDate(range.from, range.to, keys) : Promise.resolve(undefined),
+    const remainDate = DATE_RE.test(req.query.remainDate || '') ? req.query.remainDate : null;
+    const [rows, transactions, remainRows] = await Promise.all([
+      drugs.list(req.session.branchId, keys),
+      range ? drugs.transactionsForDate(req.session.branchId, range.from, range.to, keys) : Promise.resolve(undefined),
+      remainDate ? drugs.remaining(req.session.branchId) : Promise.resolve(undefined),
     ]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'ไม่พบรายการสำหรับหมวดที่เลือก' });
     }
     const dateLabel = range && (range.from === range.to ? range.from : `${range.from} ถึง ${range.to}`);
     const fileSuffix = range && (range.from === range.to ? `-${range.from}` : `-${range.from}_to_${range.to}`);
-    const wb = buildWorkbook(rows, range ? { dateLabel, transactions } : undefined);
+    const wb = buildWorkbook(rows, {
+      ...(range ? { dateLabel, transactions } : undefined),
+      ...(remainDate ? { remaining: { dateLabel: remainDate, rows: remainRows } } : undefined),
+    });
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -262,7 +281,7 @@ app.get('/api/drugs/dispensing-export', requireAuth, async (req, res) => {
     if (!range) {
       return res.status(400).json({ error: 'รูปแบบวันที่ไม่ถูกต้อง หรือช่วงวันที่ไม่ถูกต้อง (YYYY-MM-DD)' });
     }
-    const transactions = await drugs.transactionsForDate(range.from, range.to, [], codes);
+    const transactions = await drugs.transactionsForDate(req.session.branchId, range.from, range.to, [], codes);
     const dateLabel = range.from === range.to ? range.from : `${range.from} ถึง ${range.to}`;
     const fileSuffix = range.from === range.to ? range.from : `${range.from}_to_${range.to}`;
     const wb = buildDispensingWorkbook(transactions, dateLabel);

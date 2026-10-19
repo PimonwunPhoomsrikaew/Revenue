@@ -60,7 +60,6 @@ function addTransactionSheet(wb, categoryLabel, dateLabel, txRows, usedNames) {
   ws.getColumn(7).width = 18;
   ws.getColumn(8).width = 38;
   ws.getColumn(9).width = 10;
-  ws.getColumn(10).width = 14;
 
   const title = ws.getCell('A1');
   title.value = `ทรานแซคชัน • ${categoryLabel} • วันที่ ${dateLabel}`;
@@ -70,15 +69,14 @@ function addTransactionSheet(wb, categoryLabel, dateLabel, txRows, usedNames) {
   // Per-drug summary for the range: how many patients received it and how much.
   ws.getCell('A3').value = 'สรุปยอดรวมช่วงวันที่ (แยกตามรายการยา)';
   styleSubHeading(ws.getCell('A3'));
-  ws.getRow(4).values = ['รหัสยา-เวชภัณฑ์', 'ชื่อยา', 'จำนวนคนไข้', 'จำนวนที่จ่าย', 'มูลค่ารวม (บาท)'];
+  ws.getRow(4).values = ['รหัสยา-เวชภัณฑ์', 'ชื่อยา', 'จำนวนคนไข้', 'จำนวนที่จ่าย'];
   styleHeader(ws.getRow(4));
 
   const summary = drugs.aggregateByDrug(txRows);
   let row = 5;
   for (const g of summary) {
-    ws.getRow(row).values = [g.code, g.name, g.patientCount, g.qty, g.amount];
+    ws.getRow(row).values = [g.code, g.name, g.patientCount, g.qty];
     ws.getCell(row, 4).numFmt = '#,##0.##';
-    ws.getCell(row, 5).numFmt = '#,##0.00';
     row++;
   }
   if (summary.length === 0) {
@@ -93,27 +91,57 @@ function addTransactionSheet(wb, categoryLabel, dateLabel, txRows, usedNames) {
   row++;
   ws.getRow(row).values = [
     'ลำดับ', 'วันที่', 'เวลา', 'เลข Visit', 'PID', 'ชื่อ-สกุล',
-    'รหัสยา', 'ชื่อยา', 'จำนวน', 'มูลค่า (บาท)',
+    'รหัสยา', 'ชื่อยา', 'จำนวน',
   ];
   styleHeader(ws.getRow(row));
   txRows.forEach((r, i) => {
     row++;
     ws.getRow(row).values = [
       i + 1, r.date, r.time, r.visitno, r.pid, r.patientName,
-      r.code, r.name, r.qty, r.amount,
+      r.code, r.name, r.qty,
     ];
     ws.getCell(row, 9).numFmt = '#,##0.##';
-    ws.getCell(row, 10).numFmt = '#,##0.00';
   });
+}
+
+// Appends the "ยอดยาคงเหลือ" sheet: current remaining stock (live balance,
+// not date-filtered — see drugs.remaining) for every medicine item, labelled
+// with the single date the caller picked for the report.
+// rows: array from drugs.remaining().
+function addRemainingStockSheet(wb, dateLabel, rows, usedNames) {
+  const ws = wb.addWorksheet(safeSheetName('ยอดยาคงเหลือ', usedNames));
+  ws.columns = [
+    { header: 'รหัสยา', key: 'code', width: 20 },
+    { header: 'ชื่อยา', key: 'name', width: 45 },
+    { header: 'หมวด', key: 'categoryLabel', width: 24 },
+    { header: 'หน่วย', key: 'unit', width: 12 },
+    { header: 'ยอดคงเหลือ', key: 'remain', width: 16 },
+  ];
+
+  ws.spliceRows(1, 0, []);
+  const title = ws.getCell('A1');
+  title.value = `ยอดยาคงเหลือ ณ วันที่ ${dateLabel}`;
+  title.font = { bold: true, size: 13 };
+  ws.mergeCells('A1:E1');
+
+  styleHeader(ws.getRow(2));
+  ws.views = [{ state: 'frozen', ySplit: 2 }];
+  for (const r of rows) {
+    ws.addRow({ code: r.code, name: r.name, categoryLabel: r.categoryLabel, unit: r.unit, remain: r.remain });
+  }
+  ws.getColumn('remain').numFmt = '#,##0';
+  if (rows.length) ws.autoFilter = { from: 'A2', to: 'E2' };
 }
 
 // rows: array from drugs.list(). opts.dateLabel/opts.transactions (optional):
 // a date range's dispensing lines from drugs.transactionsForDate plus a
 // display label for it (e.g. "2026-08-21" or "2026-08-01 ถึง 2026-08-05"),
-// to append a per-category transaction sheet. Returns a populated
-// ExcelJS.Workbook.
+// to append a per-category transaction sheet. opts.remaining (optional):
+// { dateLabel, rows } — rows from drugs.remaining() plus the single date the
+// caller picked, to append the current-stock sheet described above. Returns
+// a populated ExcelJS.Workbook.
 function buildWorkbook(rows, opts) {
-  const { dateLabel, transactions } = opts || {};
+  const { dateLabel, transactions, remaining } = opts || {};
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Revenue';
   wb.created = new Date(0); // deterministic; real timestamp not needed in file
@@ -174,6 +202,10 @@ function buildWorkbook(rows, opts) {
     if (transactions) {
       addTransactionSheet(wb, g[0].categoryLabel, dateLabel, txByCategory.get(key) || [], usedNames);
     }
+  }
+
+  if (remaining) {
+    addRemainingStockSheet(wb, remaining.dateLabel, remaining.rows, usedNames);
   }
 
   return wb;

@@ -33,9 +33,11 @@
       <label>จากวันที่ <input type="date" id="txDateFrom" /></label>
       <label>ถึงวันที่ <input type="date" id="txDateTo" /></label>
       <button id="viewTxSummary" type="button">📊 ดูยอดจ่ายยา</button>
+      <label>วันที่ยอดคงเหลือ <input type="date" id="remainDate" /></label>
       <button id="export" type="button">⬇ Export Excel (.xlsx)</button>
     </section>
     <p class="hint">ช่วงวันที่ใช้ทั้งสำหรับ "ดูยอดจ่ายยา" ด้านล่าง และแนบชีตทรานแซคชันต่อท้ายแต่ละหมวดตอน Export — เว้นว่างถ้าไม่ต้องการชีตทรานแซคชันใน Export</p>
+    <p class="hint">"วันที่ยอดคงเหลือ" ใช้ระบุวันที่ของรายงานยอดยาคงเหลือ (เม็ด/ซอง) ที่จะแนบไว้ท้ายไฟล์ Export — เป็นยอดคงเหลือปัจจุบันจากระบบเสมอ ไม่ใช่ยอดย้อนหลัง</p>
 
     <section id="txSummaryWrap" class="detail hidden">
       <h2 id="txSummaryTitle"></h2>
